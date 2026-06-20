@@ -1,0 +1,34 @@
+name: Supabase heartbeat
+
+# Free Supabase projects pause after 7 days with no DB activity (and are deleted
+# after ~90 days paused). A real DB request resets the timer; loading the site
+# does not. This pings the heartbeat row every 3 days.
+
+on:
+  schedule:
+    - cron: '0 6 */3 * *' # 06:00 UTC, every 3rd day
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Upsert heartbeat row
+        env:
+          URL: ${{ vars.VITE_SUPABASE_URL }}
+          KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY repo variables not set; skipping."
+            exit 0
+          fi
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          code=$(curl -s -o /tmp/hb.out -w '%{http_code}' \
+            -X POST "$URL/rest/v1/heartbeat?on_conflict=id" \
+            -H "apikey: $KEY" \
+            -H "Authorization: Bearer $KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"id\":1,\"pinged_at\":\"$NOW\"}")
+          echo "HTTP $code"; cat /tmp/hb.out
+          [ "$code" -ge 200 ] && [ "$code" -lt 300 ]

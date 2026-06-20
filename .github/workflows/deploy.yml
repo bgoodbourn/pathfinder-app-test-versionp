@@ -32,6 +32,13 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
+        env:
+          # Publishable (anon) key — non-secret, baked into the static bundle by
+          # design. Set these as repo *Variables* (Settings → Secrets and
+          # variables → Actions → Variables). If unset, the app runs local-only.
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_SYNC: ${{ vars.VITE_SYNC || 'on' }}
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact

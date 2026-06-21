@@ -15,12 +15,16 @@
  *        customNpcs:  [npc],                   // user-added NPCs
  *        encounters:  [encounter],             // initiative tracker state
  *        pcs:         [pathbuilderRawBuild],   // imported party
+ *        gmPages:     [page],                  // GM notes workspace (v2)
  *    } }
+ *
+ *  v2: added overlay.gmPages (GM notes workspace). migrateOverlay fills it
+ *  with [] for older overlays, so no DB migration is needed.
  * ------------------------------------------------------------------ */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export function emptyOverlayBody() {
-  return { notes: {}, customNpcs: [], encounters: [], pcs: [] };
+  return { notes: {}, customNpcs: [], encounters: [], pcs: [], gmPages: [] };
 }
 
 export function emptyOverlay(scenarioId, updatedAt = isoNow()) {
@@ -64,6 +68,7 @@ export function migrateOverlay(blob, scenarioId) {
       customNpcs: Array.isArray(body.customNpcs) ? body.customNpcs : [],
       encounters: Array.isArray(body.encounters) ? body.encounters : [],
       pcs: Array.isArray(body.pcs) ? body.pcs : [],
+      gmPages: Array.isArray(body.gmPages) ? body.gmPages : [],
     },
   };
 }

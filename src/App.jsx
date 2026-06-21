@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, createContext, useContext } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } from "react";
 import { ScenarioProvider, useScenarioData } from "./data/ScenarioContext.jsx";
 
 /* ------------------------------------------------------------------ *
@@ -282,6 +282,13 @@ function Sym({ name, className }) {
       return (
         <svg {...p}>
           <path d="M20 3l13 5v9c0 9-5.6 15-13 20C12.6 32 7 26 7 17V8z" />
+        </svg>
+      );
+    case "gmnotes":
+      return (
+        <svg {...p}>
+          <rect x="9" y="5.5" width="22" height="29" rx="3.4" fill="none" stroke="currentColor" strokeWidth="2.6" />
+          <path d="M14 14h12M14 20h12M14 26h8" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
         </svg>
       );
     case "feats":
@@ -1884,11 +1891,516 @@ function EncountersView({ encounter, pcs, onChange, onOpenPc, onOpenNpc, onNew, 
   );
 }
 
+/* ================================================================== *
+ *  GM NOTES WORKSPACE — prep/run document editor (ported from design)
+ *
+ *  A left rail of pages (each with optional forks), a prep/run mode toggle,
+ *  search, and a document of editable blocks (heading, paragraph, read-aloud,
+ *  skill check, q&a, links, live note). Text edits mutate a working model and
+ *  debounce-save to the per-scenario overlay; structural changes re-render.
+ * ================================================================== */
+const gmClone = (x) => JSON.parse(JSON.stringify(x || []));
+const gmStamp = () => {
+  const d = new Date();
+  let h = d.getHours();
+  const m = d.getMinutes();
+  const ap = h >= 12 ? "pm" : "am";
+  h = h % 12 || 12;
+  return `${h}:${String(m).padStart(2, "0")} ${ap}`;
+};
+function gmSeedUid(pages) {
+  let max = 0;
+  const scan = (s) => {
+    const mm = /(\d+)$/.exec(String(s || ""));
+    if (mm) max = Math.max(max, +mm[1]);
+  };
+  (pages || []).forEach((p) => {
+    scan(p.id);
+    (p.blocks || []).forEach((b) => scan(b.id));
+  });
+  return max + 1;
+}
+
+const GM_BLOCK_TYPES = [
+  { type: "heading", label: "section heading" },
+  { type: "p", label: "paragraph" },
+  { type: "read", label: "read-aloud box" },
+  { type: "check", label: "skill check" },
+  { type: "qa", label: "q&a table" },
+  { type: "links", label: "linked entities" },
+];
+
+const GM_NPC = "oklch(0.6 0.13 32)";
+const GM_ENC = "oklch(0.6 0.13 250)";
+const gmLinkColor = (t) => (t === "enc" ? GM_ENC : t === "pc" ? "#111" : GM_NPC);
+
+const gmLiveBadge = {
+  fontSize: 10.5, textTransform: "lowercase", letterSpacing: ".04em", color: "#9a6a2e",
+  background: "#f2e6d4", padding: "3px 8px", borderRadius: 999, whiteSpace: "nowrap",
+};
+
+/* contenteditable that never overwrites itself while focused (cursor-safe) */
+function GmEditable({ value, editable, tag = "div", className, style, placeholder, onText, onBlur, onKeyDown, id }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const want = value == null ? "" : value;
+    if (document.activeElement !== el && el.textContent !== want) el.textContent = want;
+  });
+  const Tag = tag;
+  return (
+    <Tag
+      id={id}
+      ref={ref}
+      contentEditable={editable ? true : undefined}
+      suppressContentEditableWarning
+      data-ph={placeholder}
+      className={className}
+      style={style}
+      onInput={onText ? (e) => onText(e.currentTarget.textContent) : undefined}
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
+    />
+  );
+}
+
+function GmDots({ n }) {
+  return (
+    <span style={{ display: "inline-flex", gap: 3, marginRight: 1 }}>
+      {[0, 1, 2, 3].map((k) => (
+        <span key={k} style={{ width: 6, height: 6, borderRadius: "50%", border: "1.3px solid #111", background: k < n ? "#111" : "transparent", display: "inline-block" }} />
+      ))}
+    </span>
+  );
+}
+
+function GmInsertMenu({ onPick }) {
+  return (
+    <div className="gmn-palette">
+      <div className="gmn-palette-label">insert block</div>
+      {GM_BLOCK_TYPES.map((b) => (
+        <button key={b.type} className="gmn-palette-item" onClick={() => onPick(b.type)}>{b.label}</button>
+      ))}
+    </div>
+  );
+}
+
+function gmNewBlock(id, type) {
+  switch (type) {
+    case "heading": return { id, type: "heading", text: "" };
+    case "read": return { id, type: "read", text: "" };
+    case "check": return { id, type: "check", skill: "", dc: "", tiers: [
+      { label: "crit success", dotsOn: 4, text: "" },
+      { label: "success", dotsOn: 3, text: "" },
+      { label: "failure", dotsOn: 2, text: "" },
+      { label: "crit failure", dotsOn: 1, text: "" },
+    ] };
+    case "qa": return { id, type: "qa", qaTitle: "if the players ask…", rows: [{ q: "", a: "" }, { q: "", a: "" }] };
+    case "links": return { id, type: "links", items: [{ name: "new link", type: "npc" }] };
+    default: return { id, type: "p", text: "" };
+  }
+}
+
+/* eslint-disable react-hooks/immutability -- GM notes deliberately mutates the
+ * working model in place for cursor-stable contenteditable, then forces a
+ * re-render with a fresh array ref on structural changes. No React Compiler
+ * runs in this build, so this uncontrolled-input pattern is safe. */
+function GmNotes({ initialPages, onPersist }) {
+  // Working model in state (read during render → lint-safe). Text edits mutate
+  // block objects in place WITHOUT setState (no re-render → cursor stays put);
+  // structural changes call setPages. `latest` mirrors the model for saves.
+  const [pages, setPages] = useState(() => gmClone(initialPages || []));
+  const [uidStart] = useState(() => gmSeedUid(initialPages || []));
+  const uidRef = useRef(uidStart);
+  const latest = useRef(pages);
+  const saveTimer = useRef(null);
+  const dragFrom = useRef(null);
+  const focusComposer = useRef(false);
+
+  const [activeId, setActiveId] = useState(() => (gmClone(initialPages || [])[0]?.id ?? null));
+  const [mode, setMode] = useState("prep");
+  const [search, setSearch] = useState("");
+  const [menuAt, setMenuAt] = useState(null);
+  const [composerAt, setComposerAt] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+
+  const isPrep = mode === "prep";
+  const uid = (pfx = "b") => pfx + uidRef.current++;
+
+  useEffect(() => { latest.current = pages; });
+
+  // next = authoritative pages to persist; immediate flushes now (structural),
+  // otherwise debounced (text). Debounced fires use latest.current.
+  const save = (next, immediate) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (immediate) {
+      saveTimer.current = null;
+      latest.current = next;
+      onPersist(gmClone(next));
+    } else {
+      saveTimer.current = setTimeout(() => {
+        saveTimer.current = null;
+        onPersist(gmClone(latest.current));
+      }, 500);
+    }
+  };
+
+  // Flush any pending save when unmounting (scenario switch / leaving the tab).
+  useEffect(
+    () => () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        onPersist(gmClone(latest.current));
+      }
+    },
+    [onPersist]
+  );
+
+  // Focus the live-note composer when it opens.
+  useEffect(() => {
+    if (composerAt !== null && focusComposer.current) {
+      const el = document.getElementById("gm-live-composer");
+      if (el) el.focus();
+      focusComposer.current = false;
+    }
+  }, [composerAt]);
+
+  const mains = pages.filter((p) => p.group !== "fork");
+  const active = pages.find((p) => p.id === activeId) || pages[0] || null;
+
+  const goPage = (pid) => { setActiveId(pid); setMenuAt(null); setComposerAt(null); setSearch(""); };
+  const openMenu = (i) => { setComposerAt(null); setMenuAt((cur) => (cur === i ? null : i)); };
+  const startNote = (i) => { focusComposer.current = true; setMenuAt(null); setComposerAt(i); };
+
+  // mutate active.blocks in place, then re-render with a fresh array ref
+  const commitStructural = (immediate = true) => {
+    const next = [...pages];
+    setPages(next);
+    save(next, immediate);
+  };
+  const insertBlock = (i, type) => { active.blocks.splice(i, 0, gmNewBlock(uid(), type)); setMenuAt(null); commitStructural(); };
+  const removeBlock = (block) => { active.blocks = active.blocks.filter((b) => b !== block); commitStructural(); };
+  const commitNote = (i, text) => {
+    const t = (text || "").trim();
+    if (t) active.blocks.splice(i, 0, { id: uid(), type: "note", text: t, stamp: gmStamp() });
+    setComposerAt(null);
+    if (t) commitStructural();
+  };
+  const onNoteKey = (e, i) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitNote(i, e.currentTarget.textContent); }
+    else if (e.key === "Escape") { e.preventDefault(); setComposerAt(null); }
+  };
+
+  const addPage = () => {
+    const pid = uid("page");
+    const next = [...pages, { id: pid, title: "new page", group: "main", blocks: [] }];
+    setPages(next);
+    setActiveId(pid); setMode("prep"); setMenuAt(null); setComposerAt(null); setSearch("");
+    save(next, true);
+  };
+  const addFork = (pageId) => {
+    const fid = uid("fork");
+    let j = pages.findIndex((p) => p.id === pageId) + 1;
+    while (j < pages.length && pages[j].group === "fork" && pages[j].parentId === pageId) j++;
+    const next = [...pages];
+    next.splice(j, 0, { id: fid, title: "new fork", group: "fork", parentId: pageId, blocks: [] });
+    setPages(next);
+    setActiveId(fid); setMode("prep"); setMenuAt(null); setComposerAt(null); setSearch("");
+    save(next, true);
+  };
+  const deletePage = (pid) => {
+    const pg = pages.find((p) => p.id === pid);
+    if (!pg) return;
+    const removeIds = [pid];
+    if (pg.group !== "fork") pages.filter((p) => p.parentId === pid).forEach((f) => removeIds.push(f.id));
+    const next = pages.filter((p) => removeIds.indexOf(p.id) === -1);
+    setPages(next);
+    let nid = activeId;
+    if (removeIds.indexOf(nid) !== -1) nid = next[0]?.id ?? null;
+    setActiveId(nid); setMenuAt(null); setComposerAt(null);
+    save(next, true);
+  };
+
+  const onDragOver = (e) => { if (e) e.preventDefault(); };
+  const onDragEnd = () => { dragFrom.current = null; setDragOver(null); };
+  const startDrag = (i) => { dragFrom.current = i; };
+  const dragEnter = (i) => { if (dragFrom.current == null || dragOver === i) return; setDragOver(i); };
+  const drop = (i) => {
+    const from = dragFrom.current;
+    if (from != null && to_ok(from, i, mains.length) && from !== i) {
+      const reordered = [...mains];
+      const moved = reordered.splice(from, 1)[0];
+      reordered.splice(i, 0, moved);
+      const next = [];
+      reordered.forEach((mn) => {
+        next.push(mn);
+        pages.filter((p) => p.group === "fork" && p.parentId === mn.id).forEach((f) => next.push(f));
+      });
+      setPages(next);
+      save(next, true);
+    }
+    dragFrom.current = null;
+    setDragOver(null);
+  };
+
+  // search across pages/blocks
+  const q = search.trim().toLowerCase();
+  const results = [];
+  if (q) {
+    const push = (page, kind, text) => {
+      if (text && text.toLowerCase().includes(q)) {
+        results.push({ page: page.title, kind, snippet: text.length > 90 ? text.slice(0, 90) + "…" : text, id: page.id });
+      }
+    };
+    pages.forEach((page) => {
+      (page.blocks || []).forEach((b) => {
+        if (b.text) push(page, b.type === "read" ? "read-aloud" : b.type === "note" ? "live note" : "note", b.text);
+        if (b.type === "check") { push(page, "check", b.skill); b.tiers.forEach((t) => push(page, "check · " + t.label, t.text)); }
+        if (b.type === "qa") { push(page, "q&a", b.qaTitle); b.rows.forEach((r) => { push(page, "q&a", r.q); push(page, "q&a", r.a); }); }
+      });
+    });
+  }
+  const shown = results.slice(0, 8);
+
+  const parent = active && active.group === "fork" ? pages.find((x) => x.id === active.parentId) : null;
+  const crumb = !active
+    ? ""
+    : active.group === "fork"
+    ? (parent ? `${parent.title} → ${active.title}` : `fork → ${active.title}`)
+    : `running order · page ${mains.findIndex((x) => x.id === active.id) + 1} of ${mains.length}`;
+
+  const renderZone = (index) => {
+    if (isPrep) {
+      return (
+        <div style={{ position: "relative" }}>
+          <div className="gmn-insert" onClick={() => openMenu(index)}>
+            <span className="gmn-insert-plus">+</span>
+            <span className="gmn-insert-line" />
+            {index === 0 && <span className="gmn-insert-label">insert block</span>}
+          </div>
+          {menuAt === index && <GmInsertMenu onPick={(t) => insertBlock(index, t)} />}
+        </div>
+      );
+    }
+    return (
+      <div style={{ position: "relative" }}>
+        <div className="gmn-notezone" onClick={() => startNote(index)}>＋ live note</div>
+        {composerAt === index && (
+          <div className="gmn-composer">
+            <span style={gmLiveBadge}>live note</span>
+            <div id="gm-live-composer" contentEditable suppressContentEditableWarning onKeyDown={(e) => onNoteKey(e, index)} data-ph="type a live note — enter to save, esc to cancel" style={{ flex: 1, fontSize: 13.5, color: "#3a3a38", lineHeight: 1.5, minHeight: 20 }} />
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderBlock = (b) => {
+    const editable = isPrep || b.type === "note";
+    const onText = (text) => { b.text = text; save(pages, false); };
+    switch (b.type) {
+      case "heading":
+        return <GmEditable tag="h3" className="gmn-h" editable={editable} placeholder="section heading" value={b.text} onText={onText} />;
+      case "p":
+        return <GmEditable tag="p" className="gmn-p" editable={editable} placeholder="write a note…" value={b.text} onText={onText} />;
+      case "read":
+        return (
+          <div className="gmn-read">
+            <span className="gmn-read-tag">read aloud</span>
+            <GmEditable className="gmn-read-body" editable={editable} placeholder="boxed text to read aloud, verbatim…" value={b.text} onText={onText} />
+          </div>
+        );
+      case "check":
+        return (
+          <div className="gmn-card">
+            <div className="gmn-card-head">
+              <Sym name="combat" className="gmn-card-ico" />
+              <GmEditable tag="span" className="gmn-card-title" editable={editable} placeholder="skill — what they're rolling" value={b.skill} onText={(t) => { b.skill = t; save(pages, false); }} />
+              <span className="gmn-dc">dc <GmEditable tag="span" editable={editable} placeholder="0" value={b.dc} onText={(t) => { b.dc = t; save(pages, false); }} style={{ minWidth: 14, display: "inline-block" }} /></span>
+              <span className="gmn-secret">secret</span>
+            </div>
+            <dl style={{ margin: 0 }}>
+              {b.tiers.map((t, ti) => (
+                <div className="gmn-tier" key={ti}>
+                  <dt><GmDots n={t.dotsOn} />{t.label}</dt>
+                  <GmEditable tag="dd" editable={editable} placeholder="what happens…" value={t.text} onText={(x) => { t.text = x; save(pages, false); }} />
+                </div>
+              ))}
+            </dl>
+          </div>
+        );
+      case "qa":
+        return (
+          <div className="gmn-card">
+            <div className="gmn-card-head">
+              <Sym name="overview" className="gmn-card-ico" />
+              <GmEditable tag="span" className="gmn-card-title" editable={editable} placeholder="if the players ask…" value={b.qaTitle} onText={(t) => { b.qaTitle = t; save(pages, false); }} />
+            </div>
+            <dl style={{ margin: 0 }}>
+              {b.rows.map((row, ri) => (
+                <div className="gmn-qarow" key={ri}>
+                  <GmEditable tag="dt" editable={editable} placeholder="the question…" value={row.q} onText={(x) => { row.q = x; save(pages, false); }} />
+                  <GmEditable tag="dd" editable={editable} placeholder="your answer / what to reveal…" value={row.a} onText={(x) => { row.a = x; save(pages, false); }} />
+                </div>
+              ))}
+            </dl>
+          </div>
+        );
+      case "links":
+        return (
+          <div className="gmn-links">
+            <div className="gmn-links-label">linked to this page</div>
+            <div className="gmn-links-row">
+              {b.items.map((it, li) => (
+                <span className="gmn-chip" key={li}><span className="gmn-chip-dot" style={{ background: gmLinkColor(it.type) }} />{it.name}</span>
+              ))}
+            </div>
+          </div>
+        );
+      case "note":
+        return (
+          <div className="gmn-note">
+            <span style={gmLiveBadge}>live note</span>
+            <GmEditable className="gmn-note-body" editable value={b.text} onText={onText} />
+            {b.stamp && <span className="gmn-note-stamp">{b.stamp}</span>}
+            <button className="gmn-notedel" title="delete note" onClick={() => removeBlock(b)}>✕</button>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <>
+      <nav className="gmn-rail">
+        <div className="gmn-railsc">
+          <div style={{ marginBottom: 14 }}>
+            <div className="gmn-rail-head">
+              <span>pages</span>
+              {mains.length > 1 && <span style={{ color: "#c2c1ba" }}>drag to reorder</span>}
+            </div>
+            {mains.map((mn, mi) => {
+              const act = mn.id === activeId;
+              return (
+                <div
+                  key={mn.id}
+                  draggable
+                  onDragStart={() => startDrag(mi)}
+                  onDragEnter={() => dragEnter(mi)}
+                  onDragOver={onDragOver}
+                  onDrop={() => drop(mi)}
+                  onDragEnd={onDragEnd}
+                  style={{ position: "relative" }}
+                >
+                  {dragOver === mi && <div className="gmn-dropline" />}
+                  <div className={`gmn-row${act ? " active" : ""}`} onClick={() => goPage(mn.id)}>
+                    <Sym name="gmnotes" className="gmn-row-ico" />
+                    <span className="gmn-row-title">{mn.title}</span>
+                    <button className="gmn-ctrl" title="add a sub-fork" onClick={(e) => { e.stopPropagation(); addFork(mn.id); }}>+</button>
+                    <button className="gmn-ctrl del" title="delete page" onClick={(e) => { e.stopPropagation(); deletePage(mn.id); }}>✕</button>
+                  </div>
+                  {pages.filter((x) => x.group === "fork" && x.parentId === mn.id).map((f) => {
+                    const fa = f.id === activeId;
+                    return (
+                      <div key={f.id} className="gmn-fork-wrap">
+                        <div className={`gmn-fork${fa ? " active" : ""}`} onClick={() => goPage(f.id)}>
+                          <span className="gmn-fork-arrow">→</span>
+                          <span className="gmn-row-title">{f.title}</span>
+                          <button className="gmn-ctrl del" title="delete fork" onClick={(e) => { e.stopPropagation(); deletePage(f.id); }}>✕</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+          <button className="gmn-addpage" onClick={addPage}>
+            <span style={{ width: 18, textAlign: "center", fontSize: 17 }}>+</span>
+            <span>add page</span>
+          </button>
+        </div>
+      </nav>
+
+      <main className="gmn-main">
+        <div className="gmn-panel">
+          <div className="gmn-topbar">
+            <div className="gmn-seg">
+              <span className={`gmn-seg-opt${isPrep ? " on" : ""}`} onClick={() => { setMode("prep"); setComposerAt(null); }}>prep</span>
+              <span className={`gmn-seg-opt${!isPrep ? " on" : ""}`} onClick={() => { setMode("run"); setMenuAt(null); }}>run</span>
+            </div>
+            <span className="gmn-modehint">{isPrep ? "author freely — insert, edit, delete blocks" : "click anywhere to drop a live note as you run"}</span>
+            <div style={{ marginLeft: "auto", position: "relative" }}>
+              <div className="gmn-searchbox">
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#9a9a95" strokeWidth="1.4" strokeLinecap="round"><circle cx="7" cy="7" r="4.4" /><path d="M10.2 10.2 14 14" /></svg>
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="search every page & note…" />
+              </div>
+              {shown.length > 0 && (
+                <div className="gmn-results">
+                  <div className="gmn-results-label">{results.length} match{results.length === 1 ? "" : "es"}</div>
+                  {shown.map((res, ri) => (
+                    <button key={ri} className="gmn-result" onClick={() => goPage(res.id)}>
+                      <div className="gmn-result-meta">{res.page} · {res.kind}</div>
+                      <div className="gmn-result-snip">{res.snippet}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="gmn-doc">
+            {!active ? (
+              <div className="gmn-blank">no pages yet — use “+ add page” to start your notes.</div>
+            ) : (
+              <div key={`${active.id}:${mode}`}>
+                <div className="gmn-crumb">{crumb}</div>
+                <GmEditable
+                  tag="h2"
+                  className="gmn-pagetitle"
+                  editable={isPrep}
+                  placeholder="page title"
+                  value={active.title}
+                  onText={(t) => { active.title = t; save(pages, false); }}
+                  onBlur={() => setPages((p) => [...p])}
+                />
+                {renderZone(0)}
+                {active.blocks.map((b, i) => (
+                  <div key={b.id} style={{ position: "relative" }}>
+                    <div onClick={!isPrep && b.type !== "note" ? () => startNote(i + 1) : undefined} style={{ position: "relative", cursor: !isPrep ? "text" : "default" }}>
+                      {renderBlock(b)}
+                    </div>
+                    {isPrep && b.type !== "note" && (
+                      <button className="gmn-blockdel" title="delete block" onClick={() => removeBlock(b)}>✕</button>
+                    )}
+                    {renderZone(i + 1)}
+                  </div>
+                ))}
+                {active.blocks.length === 0 && (
+                  <div className="gmn-blank">empty page — use the + above to insert your first block.</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+    </>
+  );
+}
+/* eslint-enable react-hooks/immutability */
+
+function to_ok(from, to, len) {
+  return from >= 0 && from < len && to >= 0 && to < len;
+}
+
 /* the persistent top switch */
 const MANAGERS = [
   { id: "scenario", label: "scenario", sym: "scenario" },
   { id: "characters", label: "characters", sym: "party" },
   { id: "encounters", label: "encounters", sym: "combat" },
+  { id: "gmnotes", label: "gm notes", sym: "gmnotes" },
 ];
 
 /* ================================================================== *
@@ -1943,6 +2455,10 @@ function BinderApp() {
     },
     [createScenario]
   );
+
+  // Stable writer for the GM notes workspace (overlay.gmPages). Stable identity
+  // so GmNotes' unmount-flush effect binds to the right scenario.
+  const persistGmPages = useCallback((gmPages) => patch({ gmPages }), [patch]);
 
   // Effective selections fall back to the first item (no setState-in-effect).
   const effPcId = (activePc && pcs.some((p) => p.id === activePc) && activePc) || pcs[0]?.id || null;
@@ -2193,6 +2709,10 @@ function BinderApp() {
       </div>
 
       <div className="app">
+        {workspace === "gmnotes" ? (
+          <GmNotes key={activeId || "none"} initialPages={overlay.gmPages || []} onPersist={persistGmPages} />
+        ) : (
+        <>
         {/* ---- rail ---- */}
         <nav className={`rail ${navOpen ? "open" : ""}`}>
           <div className="rail-scroll">
@@ -2365,6 +2885,8 @@ function BinderApp() {
             )}
           </div>
         </main>
+        </>
+        )}
       </div>
 
       {addNpcOpen && <AddNpc onAdd={addCustomNpc} onClose={() => setAddNpcOpen(false)} />}
@@ -2876,6 +3398,119 @@ button{font-family:inherit;}
   .cbt{flex-wrap:wrap;}
   .cbt-hp{margin-left:auto;}
   .danger-tb{margin-left:0;}
+}
+
+/* ===================== gm notes workspace ===================== */
+.gmn-rail{width:272px;flex:0 0 272px;display:flex;flex-direction:column;padding:22px 16px 14px;min-height:0;}
+.gmn-railsc{flex:1;overflow-y:auto;min-height:0;}
+.gmn-railsc::-webkit-scrollbar{width:0;}
+.gmn-rail-head{display:flex;align-items:center;justify-content:space-between;padding:0 12px 7px;
+  font-size:10.5px;letter-spacing:.04em;text-transform:lowercase;color:#9a9a95;}
+.gmn-row{display:flex;align-items:center;gap:10px;width:100%;cursor:grab;padding:9px 8px 9px 12px;
+  border-radius:13px;font-size:14px;line-height:1.2;color:#3a3a38;background:transparent;transition:background .12s,color .12s;}
+.gmn-row:hover{background:#ececea;color:#111;}
+.gmn-row.active,.gmn-row.active:hover{background:#0e0e0e;color:#f5f5f3;}
+.gmn-row-ico{width:17px;height:17px;opacity:.9;flex:0 0 auto;color:currentColor;}
+.gmn-row-title{flex:1;text-transform:lowercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gmn-ctrl{flex:0 0 auto;width:21px;height:21px;border:0;background:transparent;cursor:pointer;border-radius:6px;
+  font-size:15px;line-height:0;color:inherit;opacity:.55;transition:opacity .12s,background .12s,color .12s;}
+.gmn-ctrl.del{font-size:11px;opacity:.45;}
+.gmn-ctrl:hover{opacity:1;background:rgba(120,120,116,.16);}
+.gmn-ctrl.del:hover{opacity:1;color:#e0726a;}
+.gmn-fork-wrap{padding-left:17px;margin-top:2px;}
+.gmn-fork{display:flex;align-items:center;gap:9px;cursor:pointer;padding:8px 8px 8px 11px;border-radius:13px;
+  font-size:13.5px;line-height:1.2;color:#3a3a38;background:transparent;transition:background .12s,color .12s;}
+.gmn-fork:hover{background:#ececea;color:#111;}
+.gmn-fork.active,.gmn-fork.active:hover{background:#0e0e0e;color:#f5f5f3;}
+.gmn-fork-arrow{color:#b8704f;font-weight:600;width:14px;text-align:center;flex:0 0 auto;}
+.gmn-fork.active .gmn-fork-arrow{color:#f5f5f3;}
+.gmn-dropline{position:absolute;top:-2px;left:12px;right:12px;height:2px;background:#0e0e0e;border-radius:2px;z-index:3;}
+.gmn-addpage{display:flex;align-items:center;gap:11px;width:100%;background:transparent;border:0;cursor:pointer;
+  padding:9px 12px;border-radius:13px;color:#6c6c68;font-size:14px;text-align:left;text-transform:lowercase;font-family:inherit;}
+.gmn-addpage:hover{background:#ececea;color:#111;}
+
+.gmn-main{flex:1;overflow:hidden;padding:20px 22px 22px 4px;min-height:0;}
+.gmn-panel{height:100%;background:#fff;border:1px solid #e7e6e1;border-radius:24px;
+  box-shadow:0 22px 48px -30px rgba(17,17,17,.22);overflow:hidden;display:flex;flex-direction:column;}
+.gmn-topbar{display:flex;align-items:center;gap:14px;padding:15px 26px;border-bottom:1px solid #ededea;flex:0 0 auto;position:relative;z-index:5;}
+.gmn-seg{display:inline-flex;background:#f1f0ec;border-radius:11px;padding:3px;}
+.gmn-seg-opt{padding:6px 18px;border-radius:9px;font-size:13px;text-transform:lowercase;cursor:pointer;color:#6c6c68;}
+.gmn-seg-opt.on{background:#fff;color:#111;box-shadow:0 1px 2px rgba(17,17,17,.08);font-weight:500;}
+.gmn-modehint{font-size:12px;color:#9a9a95;text-transform:lowercase;}
+.gmn-searchbox{display:flex;align-items:center;gap:8px;background:#f1f0ec;border-radius:11px;padding:8px 13px;width:300px;}
+.gmn-searchbox input{flex:1;border:0;outline:none;background:transparent;font-family:inherit;font-size:13px;color:#111;text-transform:lowercase;}
+.gmn-results{position:absolute;top:46px;right:0;width:340px;background:#fff;border:1px solid #e7e6e1;border-radius:14px;
+  box-shadow:0 16px 38px -14px rgba(17,17,17,.3);padding:6px;max-height:340px;overflow-y:auto;}
+.gmn-results-label{font-size:10.5px;text-transform:lowercase;letter-spacing:.05em;color:#9a9a95;padding:7px 10px 5px;}
+.gmn-result{display:block;width:100%;text-align:left;border:0;background:transparent;cursor:pointer;padding:9px 10px;border-radius:9px;font-family:inherit;}
+.gmn-result:hover{background:#f1f0ec;}
+.gmn-result-meta{font-size:11px;text-transform:lowercase;letter-spacing:.02em;color:#9a9a95;margin-bottom:2px;}
+.gmn-result-snip{font-size:13px;color:#111;line-height:1.4;}
+
+.gmn-doc{flex:1;overflow-y:auto;min-height:0;padding:34px 44px 80px;}
+.gmn-doc::-webkit-scrollbar{width:8px;}
+.gmn-doc::-webkit-scrollbar-thumb{background:#e0dfd9;border-radius:8px;}
+.gmn-main [contenteditable]:focus{outline:none;}
+.gmn-main [data-ph]:empty:before{content:attr(data-ph);color:#b4b3ad;pointer-events:none;}
+.gmn-crumb{font-size:12px;color:#6c6c68;text-transform:lowercase;letter-spacing:.01em;margin-bottom:7px;}
+.gmn-pagetitle{font-family:'Inter Tight',sans-serif;font-weight:700;font-size:34px;line-height:1.04;letter-spacing:-.03em;
+  text-transform:lowercase;color:#111;margin:0 0 6px;}
+.gmn-blank{text-align:center;color:#b4b3ad;padding:50px 0;font-size:14px;text-transform:lowercase;}
+
+.gmn-insert{display:flex;align-items:center;gap:10px;padding:7px 0;cursor:pointer;color:#cfcec8;}
+.gmn-insert:hover{color:#6c6c68;}
+.gmn-insert-plus{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+  border:1px dashed #cfcec8;border-radius:7px;font-size:15px;line-height:0;flex:0 0 auto;}
+.gmn-insert-line{flex:1;border-top:1px dashed #e2e1db;}
+.gmn-insert-label{font-size:11.5px;text-transform:lowercase;letter-spacing:.02em;}
+.gmn-palette{position:absolute;z-index:8;margin-top:4px;width:248px;background:#fff;border:1px solid #e7e6e1;border-radius:14px;
+  box-shadow:0 16px 38px -14px rgba(17,17,17,.3);padding:6px;}
+.gmn-palette-label{font-size:10.5px;text-transform:lowercase;letter-spacing:.05em;color:#9a9a95;padding:7px 10px 5px;}
+.gmn-palette-item{display:block;width:100%;text-align:left;border:0;background:transparent;cursor:pointer;padding:9px 10px;
+  border-radius:9px;font-family:inherit;font-size:13.5px;color:#111;text-transform:lowercase;}
+.gmn-palette-item:hover{background:#f1f0ec;}
+.gmn-notezone{padding:7px 0;cursor:text;color:transparent;font-size:12px;text-transform:lowercase;}
+.gmn-notezone:hover{color:#bdbcb5;}
+.gmn-composer{display:flex;gap:10px;align-items:flex-start;background:#fbf7f1;border:1px dashed #d9c3a3;border-radius:12px;padding:11px 13px;margin:4px 0;}
+
+.gmn-h{font-family:'Inter Tight',sans-serif;font-weight:600;font-size:20px;letter-spacing:-.02em;text-transform:lowercase;
+  color:#111;margin:30px 0 4px;padding-bottom:9px;border-bottom:2px solid #111;}
+.gmn-p{font-size:15.5px;line-height:1.68;color:#3a3a38;margin:14px 0;}
+.gmn-read{position:relative;margin:24px 0 22px;padding:22px 24px 18px;background:#f1f0ec;border-radius:4px 18px 18px 4px;border-left:3px solid #111;}
+.gmn-read-tag{position:absolute;top:-11px;left:18px;background:#0e0e0e;color:#f5f5f3;font-size:10.5px;letter-spacing:.04em;
+  text-transform:lowercase;padding:4px 11px;border-radius:999px;}
+.gmn-read-body{font-size:16px;line-height:1.72;color:#26241f;font-weight:450;}
+.gmn-card{margin:22px 0;border:1px solid #e7e6e1;border-radius:16px;overflow:hidden;}
+.gmn-card-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#F4F4F2;border-bottom:1px solid #e7e6e1;padding:12px 18px;}
+.gmn-card-ico{width:16px;height:16px;flex:0 0 auto;color:#111;}
+.gmn-card-title{font-weight:600;font-size:13.5px;text-transform:lowercase;}
+.gmn-dc{font-size:12px;font-weight:600;text-transform:lowercase;background:#0e0e0e;color:#f5f5f3;padding:2px 8px;border-radius:999px;}
+.gmn-secret{font-size:12px;color:#6c6c68;text-transform:lowercase;margin-left:auto;}
+.gmn-tier{display:grid;grid-template-columns:172px 1fr;padding:11px 18px;border-bottom:1px solid #ededea;align-items:baseline;}
+.gmn-tier dt{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;text-transform:lowercase;color:#111;margin:0;}
+.gmn-tier dd{margin:0;font-size:14px;line-height:1.56;color:#3a3a38;}
+.gmn-qarow{display:grid;grid-template-columns:240px 1fr;padding:11px 18px;border-bottom:1px solid #ededea;align-items:baseline;}
+.gmn-qarow dt{font-size:13px;font-weight:600;color:#111;margin:0;text-transform:lowercase;}
+.gmn-qarow dd{margin:0;font-size:13.5px;line-height:1.5;color:#3a3a38;}
+.gmn-links{margin:18px 0;}
+.gmn-links-label{font-size:11px;text-transform:lowercase;letter-spacing:.04em;color:#9a9a95;margin:0 0 9px;}
+.gmn-links-row{display:flex;flex-wrap:wrap;gap:8px;}
+.gmn-chip{display:inline-flex;align-items:center;gap:7px;background:#f1f0ec;color:#111;padding:5px 11px 5px 9px;border-radius:999px;font-size:12.5px;}
+.gmn-chip-dot{width:7px;height:7px;border-radius:50%;}
+.gmn-note{display:flex;gap:10px;align-items:flex-start;background:#fbf7f1;border:1px dashed #d9c3a3;border-radius:12px;padding:11px 13px;margin:14px 0;}
+.gmn-note-body{flex:1;font-size:13.5px;color:#3a3a38;line-height:1.5;}
+.gmn-note-stamp{font-size:11px;color:#bdab8f;white-space:nowrap;}
+.gmn-notedel{flex:0 0 auto;border:0;background:transparent;cursor:pointer;color:#c9b89e;font-size:13px;line-height:1;padding:0 2px;}
+.gmn-notedel:hover{color:#b4433a;}
+.gmn-blockdel{position:absolute;top:6px;right:-6px;width:24px;height:24px;border:1px solid #e7e6e1;background:#fff;border-radius:8px;
+  color:#b4b3ad;cursor:pointer;font-size:14px;line-height:0;opacity:.5;}
+.gmn-blockdel:hover{opacity:1;color:#b4433a;border-color:#b4433a;}
+@media (max-width:880px){
+  .gmn-rail{width:200px;flex:0 0 200px;padding:16px 10px 12px;}
+  .gmn-main{padding:12px 12px 14px 4px;}
+  .gmn-doc{padding:22px 20px 60px;}
+  .gmn-searchbox{width:180px;}
+  .gmn-results{width:280px;}
 }
 `}</style>
   );

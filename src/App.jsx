@@ -2112,7 +2112,7 @@ function gmNewBlock(id, type) {
   switch (type) {
     case "heading": return { id, type: "heading", text: "" };
     case "read": return { id, type: "read", text: "" };
-    case "check": return { id, type: "check", skill: "", dc: "", tiers: [
+    case "check": return { id, type: "check", skill: "", dc: "", secret: true, tiers: [
       { label: "crit success", dotsOn: 4, text: "" },
       { label: "success", dotsOn: 3, text: "" },
       { label: "failure", dotsOn: 2, text: "" },
@@ -2379,14 +2379,21 @@ function GmNotes({ initialPages, onPersist, npcs = [], encounters = [], onOpenNp
             <GmEditable className="gmn-read-body" editable={editable} placeholder="boxed text to read aloud, verbatim…" value={b.text} onText={onText} />
           </div>
         );
-      case "check":
+      case "check": {
+        const secret = b.secret !== false;
         return (
           <div className="gmn-card">
             <div className="gmn-card-head">
               <Sym name="combat" className="gmn-card-ico" />
               <GmEditable tag="span" className="gmn-card-title" editable={editable} placeholder="skill — what they're rolling" value={b.skill} onText={(t) => { b.skill = t; save(pages, false); }} />
               <span className="gmn-dc">dc <GmEditable tag="span" editable={editable} placeholder="0" value={b.dc} onText={(t) => { b.dc = t; save(pages, false); }} style={{ minWidth: 14, display: "inline-block" }} /></span>
-              <span className="gmn-secret">secret</span>
+              <button
+                className={`gmn-secret-toggle${secret ? "" : " open"}`}
+                title="click to toggle secret / open"
+                onClick={(e) => { e.stopPropagation(); b.secret = !secret; commitStructural(); }}
+              >
+                {secret ? "secret" : "open"}
+              </button>
             </div>
             <dl style={{ margin: 0 }}>
               {b.tiers.map((t, ti) => (
@@ -2398,6 +2405,7 @@ function GmNotes({ initialPages, onPersist, npcs = [], encounters = [], onOpenNp
             </dl>
           </div>
         );
+      }
       case "qa":
         return (
           <div className="gmn-card">
@@ -3689,6 +3697,10 @@ button{font-family:inherit;}
 .gmn-card-title{font-weight:600;font-size:13.5px;text-transform:lowercase;}
 .gmn-dc{font-size:12px;font-weight:600;text-transform:lowercase;background:#0e0e0e;color:#f5f5f3;padding:2px 8px;border-radius:999px;}
 .gmn-secret{font-size:12px;color:#6c6c68;text-transform:lowercase;margin-left:auto;}
+.gmn-secret-toggle{margin-left:auto;border:0;background:transparent;cursor:pointer;font-family:inherit;font-size:12px;
+  text-transform:lowercase;color:#6c6c68;padding:2px 9px;border-radius:999px;transition:background .12s,color .12s;}
+.gmn-secret-toggle:hover{background:#ececea;color:#111;}
+.gmn-secret-toggle.open{color:var(--ink,#111);background:#e7e6e1;}
 .gmn-tier{display:grid;grid-template-columns:172px 1fr;padding:11px 18px;border-bottom:1px solid #ededea;align-items:baseline;}
 .gmn-tier dt{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;text-transform:lowercase;color:#111;margin:0;}
 .gmn-tier dd{margin:0;font-size:14px;line-height:1.56;color:#3a3a38;}

@@ -1932,7 +1932,10 @@ const GM_BLOCK_TYPES = [
 
 const GM_NPC = "oklch(0.6 0.13 32)";
 const GM_ENC = "oklch(0.6 0.13 250)";
-const gmLinkColor = (t) => (t === "enc" ? GM_ENC : t === "pc" ? "#111" : GM_NPC);
+const GM_PAGE = "oklch(0.58 0.12 150)";
+const GM_URL = "oklch(0.55 0.13 310)";
+const gmLinkColor = (t) =>
+  t === "enc" ? GM_ENC : t === "pc" ? "#111" : t === "page" ? GM_PAGE : t === "url" ? GM_URL : GM_NPC;
 
 const gmLiveBadge = {
   fontSize: 10.5, textTransform: "lowercase", letterSpacing: ".04em", color: "#9a6a2e",
@@ -1986,6 +1989,125 @@ function GmInsertMenu({ onPick }) {
   );
 }
 
+const GM_LP_FILTERS = [
+  { key: "all", label: "all" },
+  { key: "npc", label: "npcs" },
+  { key: "enc", label: "encounters" },
+  { key: "page", label: "pages" },
+  { key: "url", label: "url" },
+];
+
+/* Concept A · command-bar link picker — keyboard-first search across npcs,
+ * encounters, pages/forks, plus an external-url mode. */
+function GmLinkPicker({ npcs, encounters, pageEntries, onPick, onClose }) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [url, setUrl] = useState("");
+  const [highlight, setHighlight] = useState(0);
+  const inputRef = useRef(null);
+  const urlRef = useRef(null);
+  const cardRef = useRef(null);
+
+  useEffect(() => { (filter === "url" ? urlRef : inputRef).current?.focus(); }, [filter]);
+  useEffect(() => {
+    const onDown = (e) => { if (cardRef.current && !cardRef.current.contains(e.target)) onClose(); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [onClose]);
+
+  const q = query.trim().toLowerCase();
+  const has = (s) => !!s && s.toLowerCase().includes(q);
+  const npcMeta = (n) => [n.role, n.source].filter(Boolean).join(" · ");
+  const wantNpc = filter === "all" || filter === "npc";
+  const wantEnc = filter === "all" || filter === "enc";
+  const wantPage = filter === "all" || filter === "page";
+
+  const people = wantNpc ? npcs.filter((n) => !q || has(n.name) || has(npcMeta(n))).map((n) => ({ type: "npc", refId: n.id, name: n.name, meta: npcMeta(n) })) : [];
+  const encs = wantEnc ? encounters.filter((e) => !q || has(e.name)).map((e) => ({ type: "enc", refId: e.id, name: e.name, meta: "" })) : [];
+  const pgs = wantPage ? pageEntries.filter((p) => !q || has(p.name) || has(p.meta)).map((p) => ({ type: "page", refId: p.id, name: p.name, meta: p.meta })) : [];
+  const groups = [
+    { key: "people", label: "people", items: people },
+    { key: "encounters", label: "encounters", items: encs },
+    { key: "pages", label: "pages & forks", items: pgs },
+  ].filter((g) => g.items.length > 0);
+  const flat = groups.flatMap((g) => g.items);
+  const isUrl = filter === "url";
+  const hi = Math.min(highlight, Math.max(0, flat.length - 1));
+
+  const setQ = (v) => { setQuery(v); setHighlight(0); };
+  const setF = (k) => { setFilter(k); setHighlight(0); };
+  const linkUrl = () => { const u = url.trim(); if (u) onPick({ type: "url", name: u, url: u }); };
+
+  const onKey = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+    if (isUrl) { if (e.key === "Enter") { e.preventDefault(); linkUrl(); } return; }
+    if (e.key === "ArrowDown") { e.preventDefault(); setHighlight((h) => Math.min(flat.length - 1, h + 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHighlight((h) => Math.max(0, h - 1)); }
+    else if (e.key === "Enter") { e.preventDefault(); if (flat[hi]) onPick(flat[hi]); }
+  };
+
+  let idx = -1; // running index across visible groups for keyboard highlight
+  return (
+    <div ref={cardRef} className="gmn-lp" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="gmn-lp-search">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="#9a9a95" strokeWidth="1.4" strokeLinecap="round"><circle cx="7" cy="7" r="4.4" /><path d="M10.2 10.2 14 14" /></svg>
+        <input ref={inputRef} value={query} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} placeholder="link to a person, place, page, or url…" />
+        <span className="gmn-lp-esc">esc</span>
+      </div>
+      <div className="gmn-lp-chips">
+        {GM_LP_FILTERS.map((f) => (
+          <button key={f.key} className={`gmn-lp-chip${filter === f.key ? " active" : ""}`} onClick={() => setF(f.key)}>
+            {f.key !== "all" && <span className="gmn-lp-chipdot" style={{ background: gmLinkColor(f.key) }} />}
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {isUrl ? (
+        <div className="gmn-lp-urlwrap">
+          <div className="gmn-lp-urllabel">paste an external link</div>
+          <div className="gmn-lp-urlrow">
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="oklch(0.55 0.13 310)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="8" r="5.6" /><path d="M2.6 8h10.8M8 2.4c1.7 1.8 1.7 9.4 0 11.2M8 2.4c-1.7 1.8-1.7 9.4 0 11.2" /></svg>
+            <input ref={urlRef} value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={onKey} placeholder="https://…" />
+          </div>
+          <button className="gmn-lp-urlbtn" disabled={!url.trim()} onClick={linkUrl}>link this url</button>
+        </div>
+      ) : (
+        <div className="gmn-lp-list">
+          {groups.map((g) => (
+            <div key={g.key}>
+              <div className="gmn-lp-ghead"><span className="gmn-lp-glabel">{g.label}</span><span className="gmn-lp-gcount">{g.items.length}</span></div>
+              {g.items.map((it) => {
+                idx++;
+                const at = idx;
+                return (
+                  <button
+                    key={it.type + it.refId}
+                    className="gmn-lp-row"
+                    style={{ background: at === hi ? "#f1f0ec" : "transparent" }}
+                    onMouseEnter={() => setHighlight(at)}
+                    onClick={() => onPick(it)}
+                  >
+                    <span className="gmn-lp-dot" style={{ background: gmLinkColor(it.type) }} />
+                    <span className="gmn-lp-name">{it.name}</span>
+                    {it.meta && <span className="gmn-lp-meta">{it.meta}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+          {flat.length === 0 && <div className="gmn-lp-empty">no matches for “{query}”</div>}
+        </div>
+      )}
+
+      <div className="gmn-lp-foot">
+        <span className="gmn-lp-hint"><span className="gmn-lp-key">↑↓</span> move</span>
+        <span className="gmn-lp-hint"><span className="gmn-lp-key">↵</span> link</span>
+      </div>
+    </div>
+  );
+}
+
 function gmNewBlock(id, type) {
   switch (type) {
     case "heading": return { id, type: "heading", text: "" };
@@ -1997,7 +2119,7 @@ function gmNewBlock(id, type) {
       { label: "crit failure", dotsOn: 1, text: "" },
     ] };
     case "qa": return { id, type: "qa", qaTitle: "if the players ask…", rows: [{ q: "", a: "" }, { q: "", a: "" }] };
-    case "links": return { id, type: "links", items: [{ name: "new link", type: "npc" }] };
+    case "links": return { id, type: "links", items: [] };
     default: return { id, type: "p", text: "" };
   }
 }
@@ -2006,7 +2128,7 @@ function gmNewBlock(id, type) {
  * working model in place for cursor-stable contenteditable, then forces a
  * re-render with a fresh array ref on structural changes. No React Compiler
  * runs in this build, so this uncontrolled-input pattern is safe. */
-function GmNotes({ initialPages, onPersist }) {
+function GmNotes({ initialPages, onPersist, npcs = [], encounters = [], onOpenNpc, onOpenEncounter }) {
   // Working model in state (read during render → lint-safe). Text edits mutate
   // block objects in place WITHOUT setState (no re-render → cursor stays put);
   // structural changes call setPages. `latest` mirrors the model for saves.
@@ -2024,6 +2146,7 @@ function GmNotes({ initialPages, onPersist }) {
   const [menuAt, setMenuAt] = useState(null);
   const [composerAt, setComposerAt] = useState(null);
   const [dragOver, setDragOver] = useState(null);
+  const [linkPickerAt, setLinkPickerAt] = useState(null); // block id with the link picker open
 
   const isPrep = mode === "prep";
   const uid = (pfx = "b") => pfx + uidRef.current++;
@@ -2069,8 +2192,8 @@ function GmNotes({ initialPages, onPersist }) {
   const mains = pages.filter((p) => p.group !== "fork");
   const active = pages.find((p) => p.id === activeId) || pages[0] || null;
 
-  const goPage = (pid) => { setActiveId(pid); setMenuAt(null); setComposerAt(null); setSearch(""); };
-  const openMenu = (i) => { setComposerAt(null); setMenuAt((cur) => (cur === i ? null : i)); };
+  const goPage = (pid) => { setActiveId(pid); setMenuAt(null); setComposerAt(null); setLinkPickerAt(null); setSearch(""); };
+  const openMenu = (i) => { setComposerAt(null); setLinkPickerAt(null); setMenuAt((cur) => (cur === i ? null : i)); };
   const startNote = (i) => { focusComposer.current = true; setMenuAt(null); setComposerAt(i); };
 
   // mutate active.blocks in place, then re-render with a fresh array ref
@@ -2079,8 +2202,53 @@ function GmNotes({ initialPages, onPersist }) {
     setPages(next);
     save(next, immediate);
   };
-  const insertBlock = (i, type) => { active.blocks.splice(i, 0, gmNewBlock(uid(), type)); setMenuAt(null); commitStructural(); };
+  const insertBlock = (i, type) => {
+    const nb = gmNewBlock(uid(), type);
+    active.blocks.splice(i, 0, nb);
+    setMenuAt(null);
+    commitStructural();
+    if (type === "links") setLinkPickerAt(nb.id); // open the picker on a fresh links block
+  };
   const removeBlock = (block) => { active.blocks = active.blocks.filter((b) => b !== block); commitStructural(); };
+
+  // link picker: append / remove items on a links block (store the canonical shape)
+  const addLink = (block, item) => {
+    const clean = item.type === "url"
+      ? { type: "url", name: item.name, url: item.url }
+      : { type: item.type, name: item.name, refId: item.refId };
+    block.items.push(clean);
+    setLinkPickerAt(null);
+    commitStructural();
+  };
+  const removeLink = (block, li) => { block.items.splice(li, 1); commitStructural(); };
+
+  // navigate a chip to its target (npc sheet, encounter, page/fork, or url)
+  const navigateLink = (it) => {
+    if (it.type === "url") { if (it.url) window.open(it.url, "_blank", "noopener,noreferrer"); return; }
+    if (it.type === "page") { if (pages.some((p) => p.id === it.refId)) goPage(it.refId); return; }
+    if (it.type === "npc") { onOpenNpc && onOpenNpc(it.refId); return; }
+    if (it.type === "enc") { onOpenEncounter && onOpenEncounter(it.refId); return; }
+  };
+
+  // targets for the picker: other pages/forks in this notes tab
+  const pageEntries = pages
+    .filter((p) => p.id !== (active && active.id))
+    .map((p) =>
+      p.group === "fork"
+        ? { id: p.id, name: p.title, meta: "fork · " + (pages.find((x) => x.id === p.parentId)?.title || "") }
+        : { id: p.id, name: p.title, meta: "page " + (mains.findIndex((m) => m.id === p.id) + 1) }
+    );
+
+  // a link is "dangling" when its target no longer exists (urls never dangle)
+  const npcIdSet = new Set(npcs.map((n) => n.id));
+  const encIdSet = new Set(encounters.map((e) => e.id));
+  const pageIdSet = new Set(pages.map((p) => p.id));
+  const linkDangling = (it) =>
+    it.type === "npc" ? !npcIdSet.has(it.refId)
+    : it.type === "enc" ? !encIdSet.has(it.refId)
+    : it.type === "page" ? !pageIdSet.has(it.refId)
+    : it.type === "url" ? !it.url
+    : false;
   const commitNote = (i, text) => {
     const t = (text || "").trim();
     if (t) active.blocks.splice(i, 0, { id: uid(), type: "note", text: t, stamp: gmStamp() });
@@ -2252,10 +2420,39 @@ function GmNotes({ initialPages, onPersist }) {
           <div className="gmn-links">
             <div className="gmn-links-label">linked to this page</div>
             <div className="gmn-links-row">
-              {b.items.map((it, li) => (
-                <span className="gmn-chip" key={li}><span className="gmn-chip-dot" style={{ background: gmLinkColor(it.type) }} />{it.name}</span>
-              ))}
+              {b.items.map((it, li) => {
+                const dangling = linkDangling(it);
+                const kind = it.type === "enc" ? "encounter" : it.type === "page" ? "page" : "npc";
+                return (
+                  <span
+                    className={`gmn-chip gmn-chip-link${dangling ? " dangling" : ""}`}
+                    key={li}
+                    title={dangling ? `${kind} no longer exists` : it.type === "url" ? it.url : `open ${kind}`}
+                    onClick={() => { if (!dangling) navigateLink(it); }}
+                  >
+                    <span className="gmn-chip-dot" style={{ background: gmLinkColor(it.type) }} />
+                    {it.name}
+                    {it.type === "url" && !dangling && <span className="gmn-chip-ext" aria-hidden="true">↗</span>}
+                    {isPrep && <button className="gmn-chipdel" title="remove link" onClick={(e) => { e.stopPropagation(); removeLink(b, li); }}>✕</button>}
+                  </span>
+                );
+              })}
+              {b.items.length === 0 && !isPrep && <span className="gmn-links-empty">no links</span>}
             </div>
+            {isPrep && (
+              <div style={{ position: "relative", marginTop: 9 }}>
+                <button className="gmn-addlink" onMouseDown={(e) => e.stopPropagation()} onClick={() => setLinkPickerAt((cur) => (cur === b.id ? null : b.id))}>+ add link</button>
+                {linkPickerAt === b.id && (
+                  <GmLinkPicker
+                    npcs={npcs}
+                    encounters={encounters}
+                    pageEntries={pageEntries}
+                    onPick={(item) => addLink(b, item)}
+                    onClose={() => setLinkPickerAt(null)}
+                  />
+                )}
+              </div>
+            )}
           </div>
         );
       case "note":
@@ -2329,7 +2526,7 @@ function GmNotes({ initialPages, onPersist }) {
           <div className="gmn-topbar">
             <div className="gmn-seg">
               <span className={`gmn-seg-opt${isPrep ? " on" : ""}`} onClick={() => { setMode("prep"); setComposerAt(null); }}>prep</span>
-              <span className={`gmn-seg-opt${!isPrep ? " on" : ""}`} onClick={() => { setMode("run"); setMenuAt(null); }}>run</span>
+              <span className={`gmn-seg-opt${!isPrep ? " on" : ""}`} onClick={() => { setMode("run"); setMenuAt(null); setLinkPickerAt(null); }}>run</span>
             </div>
             <span className="gmn-modehint">{isPrep ? "author freely — insert, edit, delete blocks" : "click anywhere to drop a live note as you run"}</span>
             <div style={{ marginLeft: "auto", position: "relative" }}>
@@ -2540,6 +2737,12 @@ function BinderApp() {
     setNavOpen(false);
   }, []);
 
+  const openEncounter = useCallback((id) => {
+    setActiveEnc(id);
+    setWorkspace("encounters");
+    setNavOpen(false);
+  }, []);
+
   const prefillEncounters = useCallback(() => {
     const names = new Set(encounters.map((e) => e.name));
     const added = buildScenarioEncounters(names, S?.encounters);
@@ -2710,7 +2913,7 @@ function BinderApp() {
 
       <div className="app">
         {workspace === "gmnotes" ? (
-          <GmNotes key={activeId || "none"} initialPages={overlay.gmPages || []} onPersist={persistGmPages} />
+          <GmNotes key={activeId || "none"} initialPages={overlay.gmPages || []} onPersist={persistGmPages} npcs={allNpcs} encounters={encounters} onOpenNpc={openNpc} onOpenEncounter={openEncounter} />
         ) : (
         <>
         {/* ---- rail ---- */}
@@ -3496,7 +3699,52 @@ button{font-family:inherit;}
 .gmn-links-label{font-size:11px;text-transform:lowercase;letter-spacing:.04em;color:#9a9a95;margin:0 0 9px;}
 .gmn-links-row{display:flex;flex-wrap:wrap;gap:8px;}
 .gmn-chip{display:inline-flex;align-items:center;gap:7px;background:#f1f0ec;color:#111;padding:5px 11px 5px 9px;border-radius:999px;font-size:12.5px;}
-.gmn-chip-dot{width:7px;height:7px;border-radius:50%;}
+.gmn-chip-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;}
+.gmn-chip-link{cursor:pointer;transition:background .12s;}
+.gmn-chip-link:hover{background:#e7e6e1;}
+.gmn-chip-ext{color:#9a9a95;font-size:11px;margin-left:1px;}
+.gmn-chip-link.dangling{opacity:.45;cursor:default;text-decoration:line-through;text-decoration-color:#c2c1ba;}
+.gmn-chip-link.dangling:hover{background:#f1f0ec;}
+.gmn-chipdel{border:0;background:transparent;cursor:pointer;color:#9a9a95;font-size:10.5px;line-height:1;padding:0 0 0 2px;margin-left:1px;}
+.gmn-chipdel:hover{color:#b4433a;}
+.gmn-links-empty{font-size:12.5px;color:#b4b3ad;text-transform:lowercase;}
+.gmn-addlink{display:inline-flex;align-items:center;gap:6px;background:#f1f0ec;border:0;border-radius:999px;padding:5px 12px;
+  font-size:12px;color:#6c6c68;cursor:pointer;text-transform:lowercase;font-family:inherit;}
+.gmn-addlink:hover{background:#e7e6e1;color:#111;}
+
+/* link picker (Concept A · command bar) */
+.gmn-lp{position:absolute;z-index:9;top:calc(100% + 6px);left:0;width:410px;max-width:88vw;background:#fff;
+  border:1px solid #e7e6e1;border-radius:16px;box-shadow:0 24px 60px -30px rgba(0,0,0,.4);overflow:hidden;}
+.gmn-lp-search{padding:13px 16px 11px;border-bottom:1px solid #f0efea;display:flex;align-items:center;gap:8px;}
+.gmn-lp-search input{flex:1;border:0;outline:none;background:transparent;font-family:inherit;font-size:14.5px;color:#111;text-transform:lowercase;}
+.gmn-lp-esc{font-size:10.5px;color:#bdbcb5;border:1px solid #ececea;border-radius:6px;padding:2px 6px;text-transform:lowercase;}
+.gmn-lp-chips{padding:10px 14px;border-bottom:1px solid #f0efea;display:flex;gap:6px;flex-wrap:wrap;}
+.gmn-lp-chip{font-size:12px;text-transform:lowercase;padding:5px 11px;border-radius:999px;border:0;cursor:pointer;
+  display:flex;align-items:center;gap:6px;background:#f1f0ec;color:#6c6c68;font-family:inherit;}
+.gmn-lp-chip:hover{background:#e7e6e1;color:#111;}
+.gmn-lp-chip.active,.gmn-lp-chip.active:hover{background:#0e0e0e;color:#f5f5f3;}
+.gmn-lp-chipdot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;}
+.gmn-lp-list{max-height:308px;overflow-y:auto;padding:6px;}
+.gmn-lp-list::-webkit-scrollbar{width:8px;}
+.gmn-lp-list::-webkit-scrollbar-thumb{background:#e0dfd9;border-radius:8px;}
+.gmn-lp-ghead{display:flex;align-items:center;gap:7px;padding:11px 10px 5px;}
+.gmn-lp-glabel{font-size:10.5px;letter-spacing:.05em;color:#9a9a95;text-transform:lowercase;}
+.gmn-lp-gcount{font-size:10.5px;color:#c2c1ba;}
+.gmn-lp-row{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border-radius:9px;border:0;text-align:left;cursor:pointer;font-family:inherit;}
+.gmn-lp-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
+.gmn-lp-name{flex:1;font-size:13.5px;color:#111;text-transform:lowercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gmn-lp-meta{font-size:11.5px;color:#9a9a95;white-space:nowrap;text-transform:lowercase;}
+.gmn-lp-empty{text-align:center;color:#b4b3ad;font-size:13px;padding:26px 0;text-transform:lowercase;}
+.gmn-lp-urlwrap{padding:16px;}
+.gmn-lp-urllabel{font-size:11px;letter-spacing:.04em;color:#9a9a95;margin-bottom:8px;text-transform:lowercase;}
+.gmn-lp-urlrow{background:#f1f0ec;border-radius:10px;padding:9px 12px;display:flex;align-items:center;gap:8px;}
+.gmn-lp-urlrow input{flex:1;border:0;outline:none;background:transparent;font-family:inherit;font-size:14px;color:#111;}
+.gmn-lp-urlbtn{margin-top:12px;width:100%;background:#0e0e0e;color:#f5f5f3;border-radius:10px;padding:10px;font-size:13px;
+  text-transform:lowercase;border:0;cursor:pointer;font-family:inherit;}
+.gmn-lp-urlbtn:disabled{opacity:.45;cursor:default;}
+.gmn-lp-foot{padding:9px 14px;border-top:1px solid #f0efea;background:#fbfbfa;display:flex;gap:12px;}
+.gmn-lp-hint{font-size:11px;color:#9a9a95;display:flex;align-items:center;gap:5px;text-transform:lowercase;}
+.gmn-lp-key{border:1px solid #ddd;border-radius:5px;padding:1px 5px;font-size:10.5px;color:#6c6c68;}
 .gmn-note{display:flex;gap:10px;align-items:flex-start;background:#fbf7f1;border:1px dashed #d9c3a3;border-radius:12px;padding:11px 13px;margin:14px 0;}
 .gmn-note-body{flex:1;font-size:13.5px;color:#3a3a38;line-height:1.5;}
 .gmn-note-stamp{font-size:11px;color:#bdab8f;white-space:nowrap;}

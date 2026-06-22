@@ -3214,7 +3214,6 @@ function BinderApp() {
 
         {!dockVisible && (
           <button className="dock-handle" onClick={() => setDockLocked(true)} aria-label="show menu">
-            <span className="dock-handle-grip" />
             menu
             <span className="dock-handle-caret">▾</span>
           </button>
@@ -3467,15 +3466,16 @@ button{font-family:inherit;}
 .dock-pin-dot{width:8px;height:8px;border-radius:50%;border:1.6px solid var(--faint);}
 .dock-pin.on{border-color:var(--accent);background:var(--accent-tint);color:var(--accent);}
 .dock-pin.on .dock-pin-dot{border:0;background:var(--accent);}
-/* pull handle */
+/* pull handle — "ghost": blends into the panel, never black */
 .dock-handle{position:absolute;left:50%;top:0;transform:translateX(-50%);
-  display:flex;align-items:center;gap:9px;
-  background:#16150f;color:#f5f4f1;border:0;border-radius:0 0 13px 13px;
-  padding:6px 18px 7px;font-size:11.5px;font-family:inherit;text-transform:lowercase;
-  cursor:pointer;box-shadow:0 8px 18px -10px rgba(0,0,0,.5);}
-.dock-handle-grip{width:13px;height:1.6px;border-radius:2px;background:currentColor;
-  box-shadow:0 4px 0 currentColor,0 -4px 0 currentColor;}
-.dock-handle-caret{font-size:9px;opacity:.7;}
+  display:flex;align-items:center;gap:7px;
+  background:var(--panel);color:var(--faint);
+  border:1px solid var(--line);border-top:0;border-radius:0 0 11px 11px;
+  padding:5px 16px 6px;font-size:11px;font-family:inherit;text-transform:lowercase;
+  letter-spacing:.02em;cursor:pointer;box-shadow:0 6px 13px -11px rgba(17,17,17,.4);
+  transition:color .14s;}
+.dock-handle:hover{color:var(--ink-3);}
+.dock-handle-caret{font-size:8px;}
 .scen-switch{border:1px solid var(--line);background:var(--panel);border-radius:12px;
   padding:8px 12px;font-size:13px;color:var(--ink-2);font-family:inherit;text-transform:lowercase;cursor:pointer;
   max-width:42vw;}

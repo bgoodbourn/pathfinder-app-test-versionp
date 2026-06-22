@@ -1832,6 +1832,27 @@ function ConditionPicker({ onPick, onClose }) {
   );
 }
 
+/* auto-growing, borderless textarea (encounter note, combatant note, log lines) */
+function AutoTextarea({ value, onChange, className, placeholder, ariaLabel, onKeyDown }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
+  });
+  return (
+    <textarea
+      ref={ref}
+      className={className}
+      value={value || ""}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      rows={1}
+      onKeyDown={onKeyDown}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
 /* ---- a single combatant row ---- */
 function CombatantRow({ c, onPatch, onRemove, onOpenPc, onOpenNpc, onAddCondition }) {
   const [roll, setRoll] = useState(null); // ephemeral save-roll readout (not persisted)
@@ -1915,7 +1936,6 @@ function CombatantRow({ c, onPatch, onRemove, onOpenPc, onOpenNpc, onAddConditio
             <button className="cbt-roll-x" title="dismiss roll" onClick={() => setRoll(null)}>×</button>
           </div>
         )}
-        {c.notes && <div className="cbt-note">{c.notes}</div>}
         <div className="cbt-conds">
           {c.conditions.map((cond) => (
             <span key={cond.id} className="cond" title={conditionTip(cond)}>
@@ -1924,6 +1944,10 @@ function CombatantRow({ c, onPatch, onRemove, onOpenPc, onOpenNpc, onAddConditio
             </span>
           ))}
           <button className="cond-add" onClick={onAddCondition}>+ condition</button>
+        </div>
+        <div className="cbt-noterow">
+          <span className="cbt-note-label">note</span>
+          <AutoTextarea className="cbt-note-input" value={c.notes} onChange={(v) => onPatch({ notes: v })} placeholder="add a note…" ariaLabel="combatant note" />
         </div>
       </div>
       <div className="cbt-hp">
@@ -1973,6 +1997,17 @@ function EncountersView({ encounter, pcs, onChange, onOpenPc, onOpenNpc, onNew, 
   const addCombatant = (c) => setCombatants((cs) => [...cs, c]);
   const removeCombatant = (id) => setCombatants((cs) => cs.filter((c) => c.id !== id));
 
+  // round bar + running sheet (round/log default tolerantly on read)
+  const round = encounter.round ?? 1;
+  const log = Array.isArray(encounter.log) ? encounter.log : [];
+  const advance = () => onChange((enc) => ({ ...enc, round: (enc.round ?? 1) + 1 }));
+  const back = () => onChange((enc) => ({ ...enc, round: Math.max(1, (enc.round ?? 1) - 1) }));
+  const resetRnd = () => onChange((enc) => ({ ...enc, round: 1 }));
+  const setNote = (note) => onChange((enc) => ({ ...enc, note }));
+  const addLog = () => onChange((enc) => ({ ...enc, log: [...(enc.log || []), { id: uid(), round: enc.round ?? 1, text: "" }] }));
+  const patchLog = (id, text) => onChange((enc) => ({ ...enc, log: (enc.log || []).map((l) => (l.id === id ? { ...l, text } : l)) }));
+  const deleteLog = (id) => onChange((enc) => ({ ...enc, log: (enc.log || []).filter((l) => l.id !== id) }));
+
   const rollInitiative = () =>
     setCombatants((cs) => cs.map((c) => (c.kind === "pc" ? c : { ...c, init: d20() + (c.perception || 0) })));
 
@@ -1999,7 +2034,8 @@ function EncountersView({ encounter, pcs, onChange, onOpenPc, onOpenNpc, onNew, 
   };
 
   return (
-    <article className="article enc">
+    <article className="article encv">
+      <div className="enc-scroll">
       <div className="enc-head">
         <Sym name="combat" className="article-sym" />
         <div className="enc-head-main">
@@ -2010,12 +2046,16 @@ function EncountersView({ encounter, pcs, onChange, onOpenPc, onOpenNpc, onNew, 
             onChange={(e) => onChange((enc) => ({ ...enc, name: e.target.value }))}
             aria-label="encounter name"
           />
-          {encounter.note && <div className="enc-note-sub">{encounter.note}</div>}
         </div>
         <div className="enc-head-actions">
           <span className={`enc-threat t-${budget.label.replace(/[^a-z]/g, "")}`}>{budget.label} · {budget.xp} xp</span>
           <button className="mini danger" onClick={onRemove}>remove</button>
         </div>
+      </div>
+
+      <div className="enc-note">
+        <svg className="enc-note-pencil" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="#b4b3ad" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3z" /></svg>
+        <AutoTextarea className="enc-note-input" value={encounter.note} onChange={setNote} placeholder="describe the encounter — terrain, stakes, how it kicks off…" ariaLabel="encounter note" />
       </div>
 
       <div className="enc-toolbar">
@@ -2071,19 +2111,49 @@ function EncountersView({ encounter, pcs, onChange, onOpenPc, onOpenNpc, onNew, 
         </div>
       )}
 
-      <div className="cbt-list">
-        {ordered.length === 0 && <div className="cbt-empty">no combatants yet — add players or creatures above.</div>}
-        {ordered.map((c) => (
-          <CombatantRow
-            key={c.id}
-            c={c}
-            onPatch={(p) => patch(c.id, p)}
-            onRemove={() => removeCombatant(c.id)}
-            onOpenPc={onOpenPc}
-            onOpenNpc={onOpenNpc}
-            onAddCondition={() => setCondFor(c.id)}
-          />
-        ))}
+      <div className="enc-body">
+        <div className="cbt-list">
+          {ordered.length === 0 && <div className="cbt-empty">no combatants yet — add players or creatures above.</div>}
+          {ordered.map((c) => (
+            <CombatantRow
+              key={c.id}
+              c={c}
+              onPatch={(p) => patch(c.id, p)}
+              onRemove={() => removeCombatant(c.id)}
+              onOpenPc={onOpenPc}
+              onOpenNpc={onOpenNpc}
+              onAddCondition={() => setCondFor(c.id)}
+            />
+          ))}
+        </div>
+
+        <aside className="running-sheet">
+          <div className="rs-head">
+            <span className="rs-label">running sheet</span>
+            <button className="rs-add" onClick={addLog}>+ log</button>
+          </div>
+          <div className="rs-entries">
+            {log.length === 0 && <div className="rs-empty">log key beats as the fight unfolds.</div>}
+            {log.map((l) => (
+              <div className="rs-entry" key={l.id}>
+                <span className="rs-badge">r{l.round}</span>
+                <AutoTextarea className="rs-input" value={l.text} onChange={(v) => patchLog(l.id, v)} placeholder="what happened…" ariaLabel="log entry" />
+                <button className="rs-del" title="clear this line" onClick={() => deleteLog(l.id)}>×</button>
+              </div>
+            ))}
+          </div>
+        </aside>
+      </div>
+      </div>
+
+      <div className="round-bar">
+        <div className="rb-readout">
+          <span className="rb-label">round</span>
+          <span className="rb-num">{round}</span>
+        </div>
+        <button className="rb-step" title="back one round" onClick={back}>◀</button>
+        <button className="rb-advance" onClick={advance}>advance to round {round + 1} <span className="rb-arrow">→</span></button>
+        <button className="rb-reset" title="reset to round 1" onClick={resetRnd}>⟲</button>
       </div>
 
       {addOpen && <AddCombatant onAdd={addCombatant} onClose={() => setAddOpen(false)} />}
@@ -3230,7 +3300,7 @@ function BinderApp() {
         {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
 
         {/* ---- main ---- */}
-        <main className="content">
+        <main className={`content${workspace === "encounters" ? " enc-active" : ""}`}>
           <div className="panel">
             <header className="topbar">
               <button className="menu-btn" onClick={() => setNavOpen((v) => !v)} aria-label="sections">
@@ -3382,11 +3452,19 @@ button{font-family:inherit;}
 .rail-plus{width:18px;text-align:center;font-size:17px;color:var(--ink-3);}
 
 /* content + panel */
-.content{flex:1;overflow-y:auto;padding:24px 24px 24px 4px;}
-.panel{max-width:920px;margin:0 auto;background:var(--panel);border:1px solid var(--line);border-radius:26px;
-  box-shadow:0 1px 1px rgba(17,17,17,.02),0 22px 48px -30px rgba(17,17,17,.22);min-height:calc(100vh - 116px);}
+.content{flex:1;overflow-y:auto;padding:24px 24px 0 4px;display:flex;flex-direction:column;}
+.panel{width:100%;max-width:920px;margin:0 auto;background:var(--panel);border:1px solid var(--line);border-radius:26px;
+  box-shadow:0 1px 1px rgba(17,17,17,.02),0 22px 48px -30px rgba(17,17,17,.22);
+  display:flex;flex-direction:column;flex:1 0 auto;}
 .topbar{display:none;}
 .article{padding:42px 50px 90px;}
+.article.encv{display:flex;flex-direction:column;flex:1;min-height:0;padding-bottom:0;}
+/* encounters: panel fills the viewport, body scrolls internally, round bar docks */
+.content.enc-active{overflow:hidden;}
+.content.enc-active>.panel{flex:1 1 0;min-height:0;overflow:hidden;}
+.enc-scroll{flex:1;min-height:0;overflow-y:auto;margin-right:-26px;padding-right:26px;}
+.enc-scroll::-webkit-scrollbar{width:8px;}
+.enc-scroll::-webkit-scrollbar-thumb{background:#e0dfd9;border-radius:8px;}
 .article-head{margin-bottom:24px;}
 .article-sym{width:50px;height:50px;color:var(--ink);margin-bottom:18px;}
 .article-eyebrow{font-size:12px;color:var(--ink-3);text-transform:lowercase;letter-spacing:.01em;margin-bottom:7px;}
@@ -3662,8 +3740,53 @@ button{font-family:inherit;}
 .enc-name:hover{border-bottom-color:var(--line);}
 .enc-name:focus{border-bottom-color:var(--ink);}
 .enc-head-actions{display:flex;flex-direction:column;align-items:flex-end;gap:8px;}
-.enc-note-sub{font-size:12.5px;color:var(--ink-3);margin-top:6px;text-transform:lowercase;}
-.cbt-note{font-size:11px;color:var(--faint);margin-top:3px;text-transform:lowercase;}
+/* editable encounter note */
+.enc-note{display:flex;gap:9px;align-items:flex-start;margin:14px 0 16px;padding:11px 13px;
+  border:1px dashed #e2e1db;border-radius:13px;background:#fbfbfa;}
+.enc-note-pencil{flex:0 0 auto;margin-top:3px;}
+.enc-note-input{flex:1;min-width:0;border:0;outline:none;background:transparent;resize:none;overflow:hidden;
+  font-family:inherit;font-size:13.5px;color:var(--ink-2);line-height:1.5;text-transform:lowercase;}
+.enc-note-input::placeholder{color:#bdbcb5;font-style:italic;}
+/* editable per-combatant note */
+.cbt-noterow{display:flex;gap:8px;align-items:flex-start;margin-top:11px;padding-top:9px;border-top:1px dashed var(--line-2);}
+.cbt-note-label{font-size:10px;text-transform:lowercase;letter-spacing:.05em;color:#b4b3ad;margin-top:2px;flex:0 0 auto;}
+.cbt-note-input{flex:1;min-width:0;border:0;outline:none;background:transparent;resize:none;overflow:hidden;
+  font-family:inherit;font-size:12.5px;color:var(--ink-2);line-height:1.45;text-transform:lowercase;}
+.cbt-note-input::placeholder{color:#bdbcb5;}
+/* encounter body: combatant list + running sheet */
+.enc-body{display:flex;gap:16px;align-items:flex-start;}
+.running-sheet{flex:0 0 204px;border:1px solid var(--line);border-radius:16px;background:#fbfbfa;padding:14px 13px 12px;}
+.rs-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;}
+.rs-label{font-size:10.5px;text-transform:lowercase;letter-spacing:.06em;color:var(--faint);}
+.rs-add{border:0;background:var(--hush);border-radius:999px;padding:3px 9px;font-size:11px;color:var(--ink-3);cursor:pointer;
+  text-transform:lowercase;font-family:inherit;}
+.rs-add:hover{background:var(--line);color:var(--ink);}
+.rs-entries{display:flex;flex-direction:column;gap:12px;}
+.rs-empty{font-size:11.5px;color:#bdbcb5;text-transform:lowercase;line-height:1.4;}
+.rs-entry{display:flex;gap:8px;align-items:flex-start;}
+.rs-badge{font-family:'Inter Tight',sans-serif;font-weight:700;font-size:10px;color:var(--faint);background:var(--hush);
+  border-radius:6px;padding:3px 6px;line-height:1;margin-top:1px;text-transform:lowercase;flex:0 0 auto;}
+.rs-input{flex:1;min-width:0;border:0;outline:none;background:transparent;resize:none;overflow:hidden;
+  font-family:inherit;font-size:12px;color:var(--ink-2);line-height:1.45;}
+.rs-input::placeholder{color:#bdbcb5;}
+.rs-del{flex:0 0 auto;border:0;background:transparent;color:#d2d1cb;font-size:13px;line-height:1;cursor:pointer;padding:1px 2px;margin-top:1px;}
+.rs-del:hover{color:#b4544a;}
+/* docked round bar */
+.round-bar{flex:0 0 auto;margin:0 -50px;padding:13px 18px;background:#141414;
+  display:flex;align-items:center;gap:14px;border-radius:0 0 25px 25px;}
+.rb-readout{flex:0 0 auto;display:flex;align-items:baseline;gap:9px;}
+.rb-label{font-size:11px;letter-spacing:.06em;text-transform:lowercase;color:#8a8a86;}
+.rb-num{font-family:'Inter Tight',sans-serif;font-weight:700;font-size:27px;color:#fff;line-height:1;}
+.rb-step,.rb-reset{width:36px;height:36px;flex:0 0 auto;border-radius:10px;background:transparent;cursor:pointer;font-size:15px;line-height:1;}
+.rb-step{border:1px solid #333;color:#bdbcb5;}
+.rb-step:hover{border-color:#666;color:#fff;}
+.rb-reset{border:1px solid #333;color:#8a8a86;font-size:14px;}
+.rb-reset:hover{border-color:#b4544a;color:#d98b82;}
+.rb-advance{flex:1;min-width:0;display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;
+  background:var(--pill-text);color:var(--ink);border-radius:11px;padding:11px;font-size:13.5px;font-weight:500;
+  text-transform:lowercase;cursor:pointer;font-family:inherit;}
+.rb-advance:hover{background:#fff;}
+.rb-arrow{font-size:15px;}
 .npc-traits{margin-bottom:16px;}
 .npc-lines{list-style:none;margin:0 0 6px;padding:0;display:flex;flex-direction:column;gap:9px;}
 .npc-lines li{font-size:14px;line-height:1.55;color:var(--ink-2);padding-left:16px;position:relative;}
@@ -3850,6 +3973,12 @@ button{font-family:inherit;}
   .cbt{flex-wrap:wrap;}
   .cbt-hp{margin-left:auto;}
   .danger-tb{margin-left:0;}
+  .enc-body{flex-direction:column;}
+  .running-sheet{flex:1 1 auto;width:100%;}
+  .content.enc-active{overflow:visible;}
+  .content.enc-active>.panel{flex:1 0 auto;min-height:0;overflow:visible;}
+  .enc-scroll{overflow:visible;flex:0 0 auto;margin-right:0;padding-right:0;}
+  .round-bar{position:sticky;bottom:0;margin:0 -22px;border-radius:0;}
 }
 
 /* ===================== gm notes workspace ===================== */

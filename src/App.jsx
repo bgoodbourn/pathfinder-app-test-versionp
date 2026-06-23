@@ -3075,10 +3075,10 @@ function to_ok(from, to, len) {
 
 /* the persistent top switch */
 const MANAGERS = [
-  { id: "scenario", label: "scenario", sym: "scenario" },
-  { id: "characters", label: "characters", sym: "party" },
-  { id: "encounters", label: "encounters", sym: "combat" },
   { id: "gmnotes", label: "gm notes", sym: "gmnotes" },
+  { id: "encounters", label: "encounters", sym: "combat" },
+  { id: "characters", label: "characters", sym: "party" },
+  { id: "scenario", label: "scenario", sym: "scenario" },
 ];
 
 /* ================================================================== *

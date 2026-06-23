@@ -3324,7 +3324,19 @@ function BinderApp() {
   const { ready, scenario: S, scenarios, activeId, setActiveId, createScenario, overlay, patch } = useScenarioData();
 
   // UI-only state (selections, modals); all persisted data comes from overlay.
-  const [workspace, setWorkspace] = useState("characters"); // characters | scenario | encounters
+  // null = "no explicit choice yet" → fall back to the per-adventure default tab.
+  const [workspace, setWorkspace] = useState(null); // null | gmnotes | characters | scenario | encounters
+
+  // Fully-custom adventures have no authored scenario notes, so the scenario tab
+  // is hidden and they default to gm notes. Map any lingering "scenario" workspace
+  // to gm notes so a hidden tab can never be the active/rendered view.
+  const isCustom = !!S?.custom;
+  const visibleManagers = useMemo(
+    () => MANAGERS.filter((m) => m.id !== "scenario" || !isCustom),
+    [isCustom]
+  );
+  const picked = workspace ?? (isCustom ? "gmnotes" : "characters");
+  const effWorkspace = isCustom && picked === "scenario" ? "gmnotes" : picked;
   const [activePc, setActivePc] = useState(null);
   const [npcSel, setNpcSel] = useState(null);
   const [section, setSection] = useState("overview");
@@ -3369,7 +3381,7 @@ function BinderApp() {
       setActiveEnc(null);
       setScenSection("overview");
       setAdding(false);
-      setWorkspace("scenario");
+      setWorkspace("gmnotes"); // new scenarios are custom — no scenario tab
       setNewScenOpen(false);
     },
     [createScenario]
@@ -3576,7 +3588,7 @@ function BinderApp() {
   const switchTo = (w) => { setWorkspace(w); setNavOpen(false); };
 
   const crumbNow =
-    workspace === "characters"
+    effWorkspace === "characters"
       ? adding
         ? "add character"
         : npc
@@ -3584,7 +3596,7 @@ function BinderApp() {
         : pc
         ? pc.name
         : "characters"
-      : workspace === "scenario"
+      : effWorkspace === "scenario"
       ? scenSection
       : encounter
       ? encounter.name
@@ -3611,10 +3623,10 @@ function BinderApp() {
         <div className="managers">
           <div className="managers-brand">campaign binder</div>
           <div className="managers-tabs">
-            {MANAGERS.map((m) => (
+            {visibleManagers.map((m) => (
               <button
                 key={m.id}
-                className={`ms-btn ${workspace === m.id ? "on" : ""}`}
+                className={`ms-btn ${effWorkspace === m.id ? "on" : ""}`}
                 onClick={() => switchTo(m.id)}
               >
                 <span className="ms-box"><Sym name={m.sym} className="ms-sym" /></span>
@@ -3658,14 +3670,14 @@ function BinderApp() {
       </div>
 
       <div className={`app ${dockLocked ? "docked" : ""}`}>
-        {workspace === "gmnotes" ? (
+        {effWorkspace === "gmnotes" ? (
           <GmNotes key={activeId || "none"} initialPages={overlay.gmPages || []} onPersist={persistGmPages} npcs={allNpcs} encounters={encounters} onOpenNpc={openNpc} onOpenEncounter={openEncounter} />
         ) : (
         <>
         {/* ---- rail ---- */}
         <nav className={`rail ${navOpen ? "open" : ""}`}>
           <div className="rail-scroll">
-            {workspace === "characters" && (
+            {effWorkspace === "characters" && (
               <>
                 <div className="rail-group">
                   <div className="rail-group-label">player characters</div>
@@ -3709,7 +3721,7 @@ function BinderApp() {
               </>
             )}
 
-            {workspace === "scenario" && (S?.maps?.length > 0) && (
+            {effWorkspace === "scenario" && (S?.maps?.length > 0) && (
               <div className="rail-group">
                 <div className="rail-group-label">reference</div>
                 <button className={`rail-tab ${scenSection === "maps" ? "active" : ""}`} onClick={() => goScen("maps")}>
@@ -3720,7 +3732,7 @@ function BinderApp() {
               </div>
             )}
 
-            {workspace === "scenario" &&
+            {effWorkspace === "scenario" &&
               (S?.tabs || []).map((g) => (
                 <div className="rail-group" key={g.group}>
                   <div className="rail-group-label">{g.group}</div>
@@ -3734,7 +3746,7 @@ function BinderApp() {
                 </div>
               ))}
 
-            {workspace === "encounters" && (
+            {effWorkspace === "encounters" && (
               <div className="rail-group">
                 <div className="rail-group-label">encounters</div>
                 {encounters.map((e) => (
@@ -3762,20 +3774,20 @@ function BinderApp() {
         {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
 
         {/* ---- main ---- */}
-        <main className={`content${workspace === "encounters" ? " enc-active" : ""}`}>
+        <main className={`content${effWorkspace === "encounters" ? " enc-active" : ""}`}>
           <div className="panel">
             <header className="topbar">
               <button className="menu-btn" onClick={() => setNavOpen((v) => !v)} aria-label="sections">
                 <span /><span /><span />
               </button>
               <div className="crumb">
-                <span>{workspace}</span>
+                <span>{effWorkspace}</span>
                 <span className="crumb-sep">→</span>
                 <span className="crumb-now">{crumbNow}</span>
               </div>
             </header>
 
-            {workspace === "characters" &&
+            {effWorkspace === "characters" &&
               (adding ? (
                 <div className="article"><Importer onAdd={addPc} busy={busy} error={error} /></div>
               ) : npc ? (
@@ -3819,8 +3831,8 @@ function BinderApp() {
                 </article>
               ))}
 
-            {workspace === "scenario" && <ScenarioView section={scenSection} onGo={goScen} />}
-            {workspace === "encounters" && (
+            {effWorkspace === "scenario" && <ScenarioView section={scenSection} onGo={goScen} />}
+            {effWorkspace === "encounters" && (
               <EncountersView
                 encounter={encounter}
                 pcs={pcs}
@@ -3839,7 +3851,7 @@ function BinderApp() {
 
         {/* per-tab contextual help — quiet corner trigger + slide-over */}
         <HelpCorner onClick={() => setHelpOpen(true)} />
-        {helpOpen && <HelpPanel tab={workspace} onClose={() => setHelpOpen(false)} />}
+        {helpOpen && <HelpPanel tab={effWorkspace} onClose={() => setHelpOpen(false)} />}
       </div>
 
       {addNpcOpen && <AddNpc onAdd={addCustomNpc} onClose={() => setAddNpcOpen(false)} />}

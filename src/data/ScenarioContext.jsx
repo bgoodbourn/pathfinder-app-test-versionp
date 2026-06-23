@@ -18,8 +18,9 @@ import {
   putLocalScenario,
   putLocalOverlay,
   saveOverlayDebounced,
+  flushOverlayWrites,
 } from "./repo.js";
-import { initSync, pullScenario, pullOverlay, syncEnabled } from "./sync.js";
+import { initSync, pullScenario, pullOverlay, mergeRemoteScenarios, syncEnabled } from "./sync.js";
 import { remoteUpsertScenario } from "./supabase.js";
 import { emptyOverlayBody, emptyScenario, slugify, SCHEMA_VERSION, isoNow } from "./schema.js";
 
@@ -88,6 +89,7 @@ export function ScenarioProvider({ children }) {
   const [overlay, setOverlay] = useState(emptyOverlayBody);
   const initialized = useRef(false);
   const activeIdRef = useRef(null); // guards background pulls against scenario switches
+  const manualSwitchRef = useRef(false); // set once the user deliberately picks a scenario
 
   // Background pull: refresh from Supabase without blocking the UI, adopting
   // remote data only if it's newer (pullScenario/pullOverlay handle the merge).
@@ -102,6 +104,17 @@ export function ScenarioProvider({ children }) {
       .catch(() => {});
   }, []);
 
+  // Load a scenario + its overlay when the active id changes (local first).
+  const loadActive = useCallback(
+    async (id) => {
+      const [base, ov] = await Promise.all([getLocalScenario(id), getLocalOverlay(id)]);
+      setScenario(base);
+      setOverlay(ov.overlay);
+      bgPull(id);
+    },
+    [bgPull]
+  );
+
   // First-run bootstrap — local-first: never await the network before ready.
   useEffect(() => {
     if (initialized.current) return;
@@ -114,7 +127,8 @@ export function ScenarioProvider({ children }) {
       setScenarios(list);
 
       const pref = await storage.get(ACTIVE_PREF);
-      const id = (pref && list.some((s) => s.scenario_id === pref.value) && pref.value) || (list[0] && list[0].scenario_id) || null;
+      const prefId = pref && pref.value;
+      const id = (prefId && list.some((s) => s.scenario_id === prefId) && prefId) || (list[0] && list[0].scenario_id) || null;
 
       if (id) {
         await importLegacyOverlay(id);
@@ -129,23 +143,52 @@ export function ScenarioProvider({ children }) {
       // Now that the UI is live, start sync and pull in the background.
       initSync();
       if (id) bgPull(id);
-    })();
-  }, [bgPull]);
 
-  // Load a scenario + its overlay when the active id changes (local first).
-  const loadActive = useCallback(
-    async (id) => {
-      const [base, ov] = await Promise.all([getLocalScenario(id), getLocalOverlay(id)]);
-      setScenario(base);
-      setOverlay(ov.overlay);
-      bgPull(id);
-    },
-    [bgPull]
-  );
+      // Discover scenarios created on other devices (custom scenarios live only
+      // in Supabase, not the git bundle) and fold them into the switcher. Runs
+      // after first paint so it never blocks the local-first boot.
+      mergeRemoteScenarios()
+        .then(async (pulled) => {
+          if (!pulled.length) return;
+          const next = await listLocalScenarios();
+          setScenarios(next);
+          // Fresh device: if the user's last-active scenario only just arrived
+          // and they haven't manually switched yet, open it for them.
+          if (
+            !manualSwitchRef.current &&
+            prefId &&
+            prefId !== activeIdRef.current &&
+            next.some((s) => s.scenario_id === prefId)
+          ) {
+            activeIdRef.current = prefId;
+            setActiveIdState(prefId);
+            loadActive(prefId);
+          }
+        })
+        .catch(() => {});
+    })();
+  }, [bgPull, loadActive]);
+
+  // Commit any debounced overlay edits before the page goes away. This is
+  // installed unconditionally (sync's own flush only runs when sync is on), and
+  // listens for pagehide + visibilitychange — the only events iOS Safari fires
+  // reliably when the user backgrounds or closes the tab. Without this, the
+  // last ~500ms of edits can be lost on mobile.
+  useEffect(() => {
+    const flush = () => flushOverlayWrites();
+    const onVisibility = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
 
   const setActiveId = useCallback(
     (id) => {
       if (id === activeId) return;
+      manualSwitchRef.current = true;
       storage.set(ACTIVE_PREF, id);
       activeIdRef.current = id;
       setActiveIdState(id);

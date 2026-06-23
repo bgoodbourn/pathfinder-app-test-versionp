@@ -9,7 +9,14 @@
  *  Disabled when there's no Supabase env, or when VITE_SYNC === "off"
  *  (use that on dev branches so prod overlays stay untouched).
  * ------------------------------------------------------------------ */
-import { remoteEnabled, remoteGetScenario, remoteUpsertScenario, remoteGetOverlay, remoteUpsertOverlay } from "./supabase.js";
+import {
+  remoteEnabled,
+  remoteListScenarios,
+  remoteGetScenario,
+  remoteUpsertScenario,
+  remoteGetOverlay,
+  remoteUpsertOverlay,
+} from "./supabase.js";
 import { migrateScenario, migrateOverlay } from "./schema.js";
 import {
   getLocalScenario,
@@ -61,6 +68,37 @@ export async function pullOverlay(id) {
     return local;
   } catch {
     return getLocalOverlay(id);
+  }
+}
+
+// Discover scenarios that exist remotely but not yet locally (e.g. custom
+// scenarios created on another device) and pull their base content into the
+// local store so they appear in the switcher and work offline thereafter.
+// Returns the list of scenario_ids newly pulled. Background-only; never blocks
+// first paint, so a fresh device can be fully populated without awaiting net.
+export async function mergeRemoteScenarios() {
+  if (!syncEnabled) return [];
+  try {
+    const remote = await remoteListScenarios();
+    const pulled = [];
+    for (const r of remote) {
+      const id = r.scenario_id;
+      if (!id) continue;
+      if (await getLocalScenario(id)) continue; // already have it locally
+      try {
+        const base = remoteGetScenario ? await remoteGetScenario(id) : null;
+        const merged = migrateScenario(base);
+        if (merged) {
+          await putLocalScenario(merged);
+          pulled.push(id);
+        }
+      } catch {
+        /* one scenario failing to pull must not abort the rest */
+      }
+    }
+    return pulled;
+  } catch {
+    return [];
   }
 }
 

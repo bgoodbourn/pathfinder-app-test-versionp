@@ -2777,6 +2777,26 @@ function GmNotes({ initialPages, onPersist, npcs = [], encounters = [], onOpenNp
     [onPersist]
   );
 
+  // Also flush the pending text-edit debounce before the page is backgrounded
+  // or closed — unmount doesn't fire on iOS tab-away, so without this the last
+  // in-progress note edit can be lost. Mirrors the overlay-level flush.
+  useEffect(() => {
+    const flush = () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+        onPersist(gmClone(latest.current));
+      }
+    };
+    const onVisibility = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [onPersist]);
+
   // Focus the live-note composer when it opens.
   useEffect(() => {
     if (composerAt !== null && focusComposer.current) {

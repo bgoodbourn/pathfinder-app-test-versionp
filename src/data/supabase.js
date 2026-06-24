@@ -19,11 +19,18 @@ const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
 export const supabase = url && anon ? createClient(url, anon) : null;
 export const remoteEnabled = !!supabase;
 
-const CONTENT_KEYS = ["meta", "tabs", "symFor", "content", "npcs", "maps", "encounters", "links", "custom"];
+// Fields that are real columns on the `scenario` row. Everything ELSE on the
+// blob is round-tripped wholesale inside the `content` jsonb — storing the
+// remainder rather than a hand-maintained whitelist means a newly-added
+// scenario field can never be silently dropped on a remote round-trip (the bug
+// that made `custom` vanish cross-device until it was added to the old list).
+const SCENARIO_COLUMNS = ["scenario_id", "title", "schema_version", "updated_at"];
 
 function toScenarioRow(blob) {
   const content = {};
-  for (const k of CONTENT_KEYS) content[k] = blob[k];
+  for (const k of Object.keys(blob)) {
+    if (!SCENARIO_COLUMNS.includes(k)) content[k] = blob[k];
+  }
   return {
     scenario_id: blob.scenario_id,
     title: blob.title,
@@ -34,12 +41,13 @@ function toScenarioRow(blob) {
 
 function fromScenarioRow(row) {
   if (!row) return null;
-  const content = row.content || {};
+  // Spread content first so the canonical column values always win, even if a
+  // stale copy of one ever ended up nested inside content.
   return {
+    ...(row.content || {}),
     scenario_id: row.scenario_id,
     schema_version: row.schema_version ?? SCHEMA_VERSION,
     title: row.title,
-    ...CONTENT_KEYS.reduce((o, k) => ((o[k] = content[k]), o), {}),
     updated_at: row.updated_at,
   };
 }

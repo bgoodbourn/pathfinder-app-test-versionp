@@ -3350,7 +3350,10 @@ function BinderApp() {
   // Fully-custom adventures have no authored scenario notes, so the scenario tab
   // is hidden and they default to gm notes. Map any lingering "scenario" workspace
   // to gm notes so a hidden tab can never be the active/rendered view.
-  const isCustom = !!S?.custom;
+  // Detect by the absence of scenario notes (same signal as ScenarioView's empty
+  // state) rather than the `custom` flag alone — that flag is dropped when a
+  // scenario round-trips through Supabase, so remote custom scenarios lack it.
+  const isCustom = !!S && (S.custom === true || (S.tabs?.length || 0) === 0);
   const visibleManagers = useMemo(
     () => MANAGERS.filter((m) => m.id !== "scenario" || !isCustom),
     [isCustom]

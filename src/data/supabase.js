@@ -19,7 +19,7 @@ const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
 export const supabase = url && anon ? createClient(url, anon) : null;
 export const remoteEnabled = !!supabase;
 
-const CONTENT_KEYS = ["meta", "tabs", "symFor", "content", "npcs", "maps", "encounters", "links"];
+const CONTENT_KEYS = ["meta", "tabs", "symFor", "content", "npcs", "maps", "encounters", "links", "custom"];
 
 function toScenarioRow(blob) {
   const content = {};

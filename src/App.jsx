@@ -2246,7 +2246,7 @@ function CombatantRow({ c, onPatch, onRemove, onOpenPc, onOpenNpc, onAddConditio
 }
 
 function EncountersView({ encounter, pcs, onChange, onOpenPc, onOpenNpc, onNew, onRemove, onPrefill }) {
-  const { scenario } = useScenarioData();
+  const { scenario, overlay } = useScenarioData();
   const [addOpen, setAddOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [condFor, setCondFor] = useState(null);
@@ -2300,7 +2300,8 @@ function EncountersView({ encounter, pcs, onChange, onOpenPc, onOpenNpc, onNew, 
   const inEncounter = new Set(encounter.combatants.map((c) => c.pcId).filter(Boolean));
   const availablePcs = pcs.filter((p) => !inEncounter.has(p.id));
   const inNpc = new Set(encounter.combatants.map((c) => c.npcId).filter(Boolean));
-  const availableNpcs = (scenario?.npcs || []).filter(
+  const allNpcs = [...(scenario?.npcs || []), ...(overlay?.customNpcs || [])];
+  const availableNpcs = allNpcs.filter(
     (n) => n.ac != null && n.hp != null && n.perception != null && !inNpc.has(n.id)
   );
   const budget = encounterBudget(encounter.combatants, pcs);

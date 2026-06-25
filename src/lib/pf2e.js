@@ -7,10 +7,10 @@
  * ==================================================================== */
 
 /* ----------------------------- PF2e math --------------------------- */
-export const amod = (s) => Math.floor((Number(s || 10) - 10) / 2);
+const amod = (s) => Math.floor((Number(s || 10) - 10) / 2);
 export const sign = (n) => (n >= 0 ? `+${n}` : `${n}`);
-export const RANK = { 0: "untrained", 2: "trained", 4: "expert", 6: "master", 8: "legendary" };
-export const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+const RANK = { 0: "untrained", 2: "trained", 4: "expert", 6: "master", 8: "legendary" };
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 export const ABILITIES = [
   ["str", "strength"],
@@ -21,7 +21,7 @@ export const ABILITIES = [
   ["cha", "charisma"],
 ];
 
-export const SKILLS = [
+const SKILLS = [
   ["acrobatics", "dex"],
   ["arcana", "int"],
   ["athletics", "str"],

@@ -25,7 +25,7 @@ const npcSkills = (s) =>
     return m ? [m[1].trim(), parseInt(m[2], 10)] : [item, 0];
   });
 
-const NPC_ABILS = ["str", "dex", "con", "int", "wis", "cha"];
+const NPC_ABILS = ABILITIES.map(([k]) => k);
 
 /* add NPC: two modes — quick (name + description) or full stat block */
 export function AddNpc({ onAdd, onClose }) {

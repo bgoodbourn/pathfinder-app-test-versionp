@@ -10,16 +10,9 @@
  * ==================================================================== */
 import { useState, useEffect, useRef } from "react";
 import { Sym } from "./icons.jsx";
+import { gmStamp } from "../lib/gmnotes-util.js";
 
 const gmClone = (x) => JSON.parse(JSON.stringify(x || []));
-const gmStamp = () => {
-  const d = new Date();
-  let h = d.getHours();
-  const m = d.getMinutes();
-  const ap = h >= 12 ? "pm" : "am";
-  h = h % 12 || 12;
-  return `${h}:${String(m).padStart(2, "0")} ${ap}`;
-};
 function gmSeedUid(pages) {
   let max = 0;
   const scan = (s) => {

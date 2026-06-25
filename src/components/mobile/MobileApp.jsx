@@ -12,7 +12,7 @@ import { useState, useMemo, useCallback } from "react";
 import "../../mobile.css";
 import { useScenarioData } from "../../data/ScenarioContext.jsx";
 import { seedEncounterMaps, stripSeededMaps, buildScenarioEncounters } from "../../lib/combatants.js";
-import { uid, d20 } from "../../lib/pf2e.js";
+import { uid, d20, parseBuild } from "../../lib/pf2e.js";
 import { makeNoteBlock } from "../../lib/gmnotes-util.js";
 import { haptic } from "./parts/haptic.js";
 import { IconNotes, IconPeople, IconShield } from "./parts/MobileIcons.jsx";
@@ -20,6 +20,8 @@ import { NotesScreen } from "./screens/NotesScreen.jsx";
 import { EncountersListScreen } from "./screens/EncountersListScreen.jsx";
 import { InitiativeScreen } from "./screens/InitiativeScreen.jsx";
 import { CombatantCardScreen } from "./screens/CombatantCardScreen.jsx";
+import { CharactersScreen } from "./screens/CharactersScreen.jsx";
+import { CharacterDetailScreen } from "./screens/CharacterDetailScreen.jsx";
 import { LiveNoteSheet } from "./sheets/LiveNoteSheet.jsx";
 import { PageJumperSheet } from "./sheets/PageJumperSheet.jsx";
 import { ScenarioPickerSheet } from "./sheets/ScenarioPickerSheet.jsx";
@@ -34,7 +36,7 @@ const TABS = [
   { id: "combat", label: "combat", Icon: IconShield },
 ];
 // which tab is highlighted for a given screen
-const TAB_FOR = { notes: "notes", characters: "characters", combat: "combat", initiative: "combat", combatant: "combat" };
+const TAB_FOR = { notes: "notes", characters: "characters", charDetail: "characters", combat: "combat", initiative: "combat", combatant: "combat" };
 
 export default function MobileApp({ onRequestDesktop }) {
   const { ready, scenario: S, scenarios, activeId, setActiveId, overlay, patch } = useScenarioData();
@@ -44,6 +46,7 @@ export default function MobileApp({ onRequestDesktop }) {
   const [activeEncounterId, setActiveEncounterId] = useState(null);
   const [selectedCombatantId, setSelectedCombatantId] = useState(null);
   const [pending, setPending] = useState(8);
+  const [charSel, setCharSel] = useState(null); // null | { kind:"pc"|"npc", id }
   const [sheet, setSheet] = useState(null); // null | "jumper" | "scenario" | "note"
 
   // ---- derived data (same sources as the desktop binder) ----
@@ -73,6 +76,14 @@ export default function MobileApp({ onRequestDesktop }) {
 
   const campaignName = S?.title || "scenario";
 
+  // ---- characters ----
+  const pcs = useMemo(() => (overlay.pcs || []).map((raw) => parseBuild(raw)).filter(Boolean), [overlay.pcs]);
+  const allNpcs = useMemo(() => [...(S?.npcs || []), ...(overlay.customNpcs || [])], [S, overlay.customNpcs]);
+  const openCharacter = useCallback((kind, id) => { setCharSel({ kind, id }); setScreen("charDetail"); }, []);
+  const selectedChar = charSel
+    ? (charSel.kind === "pc" ? pcs.find((p) => p.id === charSel.id) : allNpcs.find((n) => n.id === charSel.id)) || null
+    : null;
+
   // ---- notes ----
   const addLiveNote = useCallback(
     (text) => {
@@ -91,7 +102,7 @@ export default function MobileApp({ onRequestDesktop }) {
   );
 
   // ---- deep links from notes ----
-  const openNpc = useCallback(() => setScreen("characters"), []); // detail screen lands in Phase 2
+  const openNpc = useCallback((id) => openCharacter("npc", id), [openCharacter]);
   const openEncounterById = useCallback((id) => {
     if (encounters.some((e) => e.id === id)) { setActiveEncounterId(id); setScreen("initiative"); }
   }, [encounters]);
@@ -224,12 +235,9 @@ export default function MobileApp({ onRequestDesktop }) {
       />
     );
   } else if (screen === "characters") {
-    body = (
-      <div className="m-screen">
-        <header className="m-header"><h1 className="m-title">characters</h1></header>
-        <div className="m-body"><div className="m-empty">the cast lands in the next update — for now, browse characters in the desktop binder.</div></div>
-      </div>
-    );
+    body = <CharactersScreen pcs={pcs} npcs={allNpcs} onOpen={openCharacter} />;
+  } else if (screen === "charDetail") {
+    body = <CharacterDetailScreen kind={charSel?.kind} character={selectedChar} onBack={() => setScreen("characters")} />;
   }
 
   // tab bar shows on the three landing screens; drill-ins use a back affordance

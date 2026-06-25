@@ -5,30 +5,14 @@
  *  need to READ the running order and append live notes. These map each
  *  block shape ({heading,p,read,check,qa,links,note}) to a phone card.
  * ==================================================================== */
-import { useState } from "react";
-import { IconChevDown, IconLink } from "../parts/MobileIcons.jsx";
+import { IconLink } from "../parts/MobileIcons.jsx";
+import { Collapsible } from "../parts/Collapsible.jsx";
 
 const linkColor = (t) =>
   t === "npc" ? "oklch(0.6 0.13 32)"
   : t === "enc" ? "#b4544a"
   : t === "url" ? "oklch(0.6 0.13 250)"
   : "#111"; // page / default
-
-function Collapsible({ title, pill, defaultOpen = false, children }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="m-card m-collapse">
-      <button className="m-collapse-head" onClick={() => setOpen((v) => !v)}>
-        <span className="m-collapse-title">{title}</span>
-        {pill != null && <span className="m-pill m-pill-dark">{pill}</span>}
-        <span className="m-collapse-chev" style={{ transform: open ? "rotate(180deg)" : "none" }}>
-          <IconChevDown size={15} />
-        </span>
-      </button>
-      {open && <div className="m-collapse-body">{children}</div>}
-    </div>
-  );
-}
 
 function CheckBlock({ b }) {
   const title = b.skill ? b.skill.toLowerCase() : "skill check";

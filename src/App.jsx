@@ -1,6 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { ScenarioProvider, useScenarioData } from "./data/ScenarioContext.jsx";
-import { LayoutRouter } from "./LayoutRouter.jsx";
+import { useScenarioData } from "./data/ScenarioContext.jsx";
 import { parseBuild, uid } from "./lib/pf2e.js";
 import { seedEncounterMaps, stripSeededMaps, buildScenarioEncounters } from "./lib/combatants.js";
 import { Sym, ScenSym } from "./components/icons.jsx";
@@ -640,13 +639,3 @@ export function BinderApp({ onRequestMobile }) {
   );
 }
 
-/* The root wraps the layout router in the data-layer provider (IndexedDB +
- * sync). LayoutRouter picks the desktop binder or the mobile shell; both
- * mount inside the provider so they share live scenario data. */
-export default function App() {
-  return (
-    <ScenarioProvider>
-      <LayoutRouter />
-    </ScenarioProvider>
-  );
-}

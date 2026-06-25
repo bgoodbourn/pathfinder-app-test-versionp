@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { ScenarioProvider, useScenarioData } from "./data/ScenarioContext.jsx";
+import { LayoutRouter } from "./LayoutRouter.jsx";
 import { parseBuild, uid } from "./lib/pf2e.js";
 import { seedEncounterMaps, stripSeededMaps, buildScenarioEncounters } from "./lib/combatants.js";
 import { Sym, ScenSym } from "./components/icons.jsx";
@@ -91,7 +92,7 @@ const MANAGERS = [
 /* ================================================================== *
  *  ROOT — binder shell + manager switch + persistence
  * ================================================================== */
-function BinderApp() {
+export function BinderApp({ onRequestMobile }) {
   const { ready, scenario: S, scenarios, activeId, setActiveId, createScenario, overlay, patch } = useScenarioData();
 
   // UI-only state (selections, modals); all persisted data comes from overlay.
@@ -416,6 +417,11 @@ function BinderApp() {
               <span className="dock-pin-dot" />
               {dockLocked ? "pinned" : "pin menu"}
             </button>
+            {onRequestMobile && (
+              <button className="dock-pin" onClick={onRequestMobile} title="switch to the mobile layout">
+                mobile view
+              </button>
+            )}
             {scenarios.length > 0 && (
               <select
                 className="scen-switch"
@@ -634,11 +640,13 @@ function BinderApp() {
   );
 }
 
-/* The root wraps the binder in the data-layer provider (IndexedDB + sync). */
+/* The root wraps the layout router in the data-layer provider (IndexedDB +
+ * sync). LayoutRouter picks the desktop binder or the mobile shell; both
+ * mount inside the provider so they share live scenario data. */
 export default function App() {
   return (
     <ScenarioProvider>
-      <BinderApp />
+      <LayoutRouter />
     </ScenarioProvider>
   );
 }

@@ -7,7 +7,7 @@
  * preventDefault, so taps and scrolls behave normally. */
 import { useRef } from "react";
 
-export function useSwipe(onSwipe, { threshold = 60, ratio = 1.8 } = {}) {
+export function useSwipe(onSwipe, { threshold = 75, ratio = 1.8 } = {}) {
   const start = useRef(null);
 
   const onTouchStart = (e) => {

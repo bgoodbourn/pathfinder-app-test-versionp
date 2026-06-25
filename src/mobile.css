@@ -56,7 +56,8 @@
 }
 
 /* ---- screen container + transition ---- */
-.m-app .m-screen-wrap { flex: 1; min-height: 0; display: flex; animation: m-screenIn .26s cubic-bezier(.22,1,.36,1); }
+.m-app .m-screen-wrap { flex: 1; min-height: 0; display: flex; animation: m-screenIn .34s cubic-bezier(.22,1,.36,1); }
+.m-app .m-screen-wrap.m-nav-back { animation-name: m-screenInBack; }
 .m-app .m-screen { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .m-app .m-body {
   flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -266,7 +267,8 @@
 .m-app .m-jump-title, .m-app .m-scen-name { flex: 1; font-family: "Inter Tight", sans-serif; font-weight: 600; font-size: 14.5px; }
 
 /* ---- keyframes ---- */
-@keyframes m-screenIn { from { transform: translateX(20px); } to { transform: translateX(0); } }
+@keyframes m-screenIn { from { transform: translateX(28px); opacity: .35; } to { transform: translateX(0); opacity: 1; } }
+@keyframes m-screenInBack { from { transform: translateX(-28px); opacity: .35; } to { transform: translateX(0); opacity: 1; } }
 @keyframes m-sheetUp { from { transform: translateY(101%); } to { transform: translateY(0); } }
 @keyframes m-scrimIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes m-popIn { from { transform: scale(.95) translateY(-6px); } to { transform: none; } }

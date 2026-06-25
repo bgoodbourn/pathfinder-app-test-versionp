@@ -43,6 +43,8 @@ export default function MobileApp({ onRequestDesktop }) {
   const { ready, scenario: S, scenarios, activeId, setActiveId, overlay, patch } = useScenarioData();
 
   const [screen, setScreen] = useState("notes");
+  // direction the next screen slides in from: "fwd" (from the right) or "back" (from the left)
+  const [navDir, setNavDir] = useState("fwd");
   const [pageIndex, setPageIndex] = useState(0);
   const [activeEncounterId, setActiveEncounterId] = useState(null);
   const [selectedCombatantId, setSelectedCombatantId] = useState(null);
@@ -166,18 +168,26 @@ export default function MobileApp({ onRequestDesktop }) {
 
   // ---- tabs ----
   const activeTab = TAB_FOR[screen] || "notes";
-  const switchTab = (tab) => { setSheet(null); setScreen(tab); };
+  const switchTab = (tab) => {
+    setSheet(null);
+    const order = TABS.map((t) => t.id);
+    setNavDir(order.indexOf(tab) >= order.indexOf(activeTab) ? "fwd" : "back");
+    setScreen(tab);
+  };
 
   // Swipe navigation. Landing screens move along notes ↔ characters ↔ combat
   // (left = forward, right = back); drill-ins treat a left-to-right swipe as back.
+  // A left swipe slides the next screen in from the right ("fwd"); a right swipe
+  // slides it in from the left ("back").
   const onSwipe = useCallback((dir) => {
     if (sheet) return; // a sheet is open — let it own the gesture
-    if (screen === "notes") { if (dir === "left") setScreen("characters"); }
-    else if (screen === "characters") setScreen(dir === "left" ? "combat" : "notes");
-    else if (screen === "combat") { if (dir === "right") setScreen("characters"); }
-    else if (screen === "charDetail") { if (dir === "right") setScreen("characters"); }
-    else if (screen === "initiative") { if (dir === "right") setScreen("combat"); }
-    else if (screen === "combatant") { if (dir === "right") setScreen("initiative"); }
+    const go = (s) => { setNavDir(dir === "left" ? "fwd" : "back"); setScreen(s); };
+    if (screen === "notes") { if (dir === "left") go("characters"); }
+    else if (screen === "characters") go(dir === "left" ? "combat" : "notes");
+    else if (screen === "combat") { if (dir === "right") go("characters"); }
+    else if (screen === "charDetail") { if (dir === "right") go("characters"); }
+    else if (screen === "initiative") { if (dir === "right") go("combat"); }
+    else if (screen === "combatant") { if (dir === "right") go("initiative"); }
   }, [screen, sheet]);
   const swipe = useSwipe(onSwipe);
 
@@ -251,7 +261,7 @@ export default function MobileApp({ onRequestDesktop }) {
 
   return (
     <div className="m-app">
-      <div className="m-screen-wrap" key={screen} {...swipe}>{body}</div>
+      <div className={`m-screen-wrap m-nav-${navDir}`} key={screen} {...swipe}>{body}</div>
 
       {isLanding && (
         <nav className="m-tabbar">

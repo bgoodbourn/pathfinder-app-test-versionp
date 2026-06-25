@@ -15,6 +15,7 @@ import { seedEncounterMaps, stripSeededMaps, buildScenarioEncounters } from "../
 import { uid, d20, parseBuild } from "../../lib/pf2e.js";
 import { makeNoteBlock } from "../../lib/gmnotes-util.js";
 import { haptic } from "./parts/haptic.js";
+import { useSwipe } from "./parts/useSwipe.js";
 import { IconNotes, IconPeople, IconShield } from "./parts/MobileIcons.jsx";
 import { NotesScreen } from "./screens/NotesScreen.jsx";
 import { EncountersListScreen } from "./screens/EncountersListScreen.jsx";
@@ -167,6 +168,19 @@ export default function MobileApp({ onRequestDesktop }) {
   const activeTab = TAB_FOR[screen] || "notes";
   const switchTab = (tab) => { setSheet(null); setScreen(tab); };
 
+  // Swipe navigation. Landing screens move along notes ↔ characters ↔ combat
+  // (left = forward, right = back); drill-ins treat a left-to-right swipe as back.
+  const onSwipe = useCallback((dir) => {
+    if (sheet) return; // a sheet is open — let it own the gesture
+    if (screen === "notes") { if (dir === "left") setScreen("characters"); }
+    else if (screen === "characters") setScreen(dir === "left" ? "combat" : "notes");
+    else if (screen === "combat") { if (dir === "right") setScreen("characters"); }
+    else if (screen === "charDetail") { if (dir === "right") setScreen("characters"); }
+    else if (screen === "initiative") { if (dir === "right") setScreen("combat"); }
+    else if (screen === "combatant") { if (dir === "right") setScreen("initiative"); }
+  }, [screen, sheet]);
+  const swipe = useSwipe(onSwipe);
+
   if (!ready) {
     return <div className="m-app"><div className="m-boot">loading…</div></div>;
   }
@@ -237,7 +251,7 @@ export default function MobileApp({ onRequestDesktop }) {
 
   return (
     <div className="m-app">
-      <div className="m-screen-wrap" key={screen}>{body}</div>
+      <div className="m-screen-wrap" key={screen} {...swipe}>{body}</div>
 
       {isLanding && (
         <nav className="m-tabbar">
